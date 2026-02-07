@@ -4,20 +4,13 @@
     "description": "LMS Marketplace MVP",
     "main": "dist/index.js",
     "scripts": {
-        "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
-        "build": "npx prisma generate && rimraf dist && tsc",
-        "start": "node dist/index.js",
-        "worker": "node dist/workers/pdf.worker.js",
-        "prisma:generate": "prisma generate",
-        "prisma:migrate": "prisma migrate dev",
-        "prisma:deploy": "prisma migrate deploy",
-        "prisma:studio": "prisma studio",
-        "prisma:seed": "prisma db seed",
-        "postinstall": "prisma generate",
-        "test": "jest --verbose",
-        "test:coverage": "jest --coverage --verbose",
-        "test:watch": "jest --watch"
-    },
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "build": "npx prisma generate && npx prisma migrate deploy && rimraf dist && tsc -p .",
+    "start": "node dist/index.js",
+    "worker": "node dist/workers/pdf.worker.js",
+    "prisma:deploy": "npx prisma migrate deploy",
+    "postinstall": "npx prisma generate"
+},
     "prisma": {
         "seed": "ts-node prisma/seed.ts"
     },
