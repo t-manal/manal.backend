@@ -1,12 +1,14 @@
 import { z } from 'zod';
 
+// SECURITY: Registration schema MUST NOT accept 'role' field
+// This prevents privilege escalation attacks where users try to register as ADMIN
 export const registerSchema = z.object({
     email: z.string().email(),
     password: z.string().min(6),
     firstName: z.string().min(2),
     lastName: z.string().min(2),
     phoneNumber: z.string().optional(),
-});
+}).strict(); // strict() rejects any extra fields including 'role'
 
 export const verifyEmailSchema = z.object({
     code: z.string().length(6),

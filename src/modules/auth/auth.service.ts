@@ -28,6 +28,9 @@ export class AuthService {
                 firstName: input.firstName,
                 lastName: input.lastName,
                 phoneNumber: input.phoneNumber,
+                // SECURITY FIX: ALWAYS force role to STUDENT for public registration
+                // ADMIN accounts MUST be created manually via script or SQL
+                // This prevents privilege escalation attacks
                 role: Role.STUDENT,
             },
         });

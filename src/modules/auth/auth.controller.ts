@@ -8,13 +8,19 @@ const authService = new AuthService();
 export class AuthController {
     async register(req: Request, res: Response, next: NextFunction) {
         try {
+            // SECURITY: Explicit check to prevent privilege escalation
+            // Users MUST NOT be able to set their own role via API
+            if ('role' in req.body) {
+                return ApiResponse.error(res, null, 'Invalid field: role cannot be set during registration', 400);
+            }
+
             const input = registerSchema.parse(req.body);
             const { accessToken, refreshToken } = await authService.register(input);
 
             res.cookie('refreshToken', refreshToken, {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === 'production',
-                sameSite: 'lax',
+                sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
                 maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
             });
 
