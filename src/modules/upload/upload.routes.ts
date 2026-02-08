@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { UploadController } from './upload.controller';
+import { ChunkedUploadController } from './chunked-upload.controller';
 import { authMiddleware } from '../../middlewares/auth.middleware';
 import { requireRole } from '../../middlewares/rbac.middleware';
 import { Role } from '@prisma/client';
@@ -12,6 +13,7 @@ import { assetFramingGuard } from '../../middlewares/asset-security.middleware';
 
 const router = Router();
 const controller = new UploadController();
+const chunkedController = new ChunkedUploadController();
 
 const fileFilter = (allowedMimes: string[]) => (req: any, file: Express.Multer.File, cb: any) => {
     if (allowedMimes.includes(file.mimetype)) {
@@ -39,6 +41,71 @@ const uploadPdf = multer({
         'text/plain' // txt
     ])
 });
+
+// Chunk upload (accepts any binary data up to CHUNK limit)
+const uploadChunk = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: UPLOAD_LIMITS.CHUNK + 1024 }, // 5MB + small buffer for overhead
+});
+
+
+// ============================================================================
+// BUNNY STREAM DIRECT UPLOAD (Zero-Proxy Video Upload)
+// ============================================================================
+
+/**
+ * GET /uploads/bunny/prepare
+ * Returns credentials for direct video upload to Bunny Stream CDN
+ * The video file goes directly from browser to Bunny - never touches Railway
+ * Requires: ADMIN role
+ */
+router.get('/uploads/bunny/prepare',
+    authMiddleware,
+    requireRole('ADMIN'),
+    controller.prepareBunnyUpload
+);
+
+// ============================================================================
+// CHUNKED UPLOAD ENDPOINTS (New - Performance & Scale)
+// ============================================================================
+
+/**
+ * POST /uploads/init
+ * Initialize a chunked upload session
+ * Requires: ADMIN role
+ */
+router.post('/uploads/init',
+    authMiddleware,
+    requireRole('ADMIN'),
+    chunkedController.initUpload
+);
+
+/**
+ * POST /uploads/chunk
+ * Upload a single chunk
+ * Requires: ADMIN role
+ */
+router.post('/uploads/chunk',
+    authMiddleware,
+    requireRole('ADMIN'),
+    uploadChunk.single('chunk'),
+    chunkedController.uploadChunk
+);
+
+/**
+ * POST /uploads/finalize
+ * Assemble all chunks and complete the upload
+ * Requires: ADMIN role
+ */
+router.post('/uploads/finalize',
+    authMiddleware,
+    requireRole('ADMIN'),
+    chunkedController.finalizeUpload
+);
+
+// ============================================================================
+// EXISTING UPLOAD ENDPOINTS
+// ============================================================================
 
 // Thumbnails
 router.post('/courses/:courseId/thumbnail',

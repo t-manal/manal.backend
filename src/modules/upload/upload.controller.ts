@@ -127,4 +127,36 @@ export class UploadController {
             next(error);
         }
     }
+
+    /**
+     * GET /uploads/bunny/prepare
+     * 
+     * Prepares credentials for direct video upload to Bunny Stream.
+     * The video file goes directly from browser to Bunny CDN.
+     */
+    async prepareBunnyUpload(req: Request, res: Response, next: NextFunction) {
+        try {
+            const { title, partLessonId } = req.query;
+            
+            if (!title || typeof title !== 'string') {
+                throw new AppError('Title is required', 400);
+            }
+
+            // Import Bunny Stream service
+            const { BunnyStreamService } = await import('../../services/video/bunny-stream.service');
+            const { BunnyWebhookController } = await import('../webhooks/bunny-webhook.controller');
+            
+            const bunnyService = new BunnyStreamService();
+            const credentials = await bunnyService.createVideo(title);
+
+            // Register for webhook matching if partLessonId provided
+            if (partLessonId && typeof partLessonId === 'string') {
+                BunnyWebhookController.registerPendingUpload(credentials.videoId, partLessonId);
+            }
+
+            return ApiResponse.success(res, credentials, 'Bunny upload credentials generated');
+        } catch (error) {
+            next(error);
+        }
+    }
 }

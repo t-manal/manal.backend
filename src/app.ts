@@ -74,6 +74,10 @@ app.use('/api/v1/students', userRoutes);
 import instructorPaymentsRoutes from './modules/payments/instructor-payments.routes';
 app.use('/api/v1/instructor/payments', instructorPaymentsRoutes);
 
+// Webhooks (Public endpoints with signature verification)
+import bunnyWebhookRoutes from './modules/webhooks/bunny-webhook.routes';
+app.use('/api/v1/webhooks', bunnyWebhookRoutes);
+
 // Error Handling (Must be last)
 app.use(errorMiddleware);
 

@@ -5,6 +5,22 @@ import { ApiResponse } from '../../utils/api-response';
 
 const authService = new AuthService();
 
+/**
+ * SECURITY: Centralized Refresh Cookie Configuration
+ * 
+ * - HttpOnly: Prevents JavaScript access (XSS protection)
+ * - Secure: Only sent over HTTPS in production
+ * - SameSite: 'strict' in production for CSRF protection
+ * - Path: Restricted to /api/v1/auth/refresh to minimize exposure
+ */
+const REFRESH_COOKIE_OPTIONS = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'strict' as const : 'lax' as const,
+    path: '/api/v1/auth/refresh', // SECURITY: Cookie only sent to refresh endpoint
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+};
+
 export class AuthController {
     async register(req: Request, res: Response, next: NextFunction) {
         try {
@@ -17,12 +33,8 @@ export class AuthController {
             const input = registerSchema.parse(req.body);
             const { accessToken, refreshToken } = await authService.register(input);
 
-            res.cookie('refreshToken', refreshToken, {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-                maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-            });
+            // SECURITY: Set refresh token with hardened cookie options
+            res.cookie('refreshToken', refreshToken, REFRESH_COOKIE_OPTIONS);
 
             return ApiResponse.success(res, { accessToken }, 'User registered successfully', 201);
         } catch (error) {
@@ -35,12 +47,8 @@ export class AuthController {
             const input = loginSchema.parse(req.body);
             const { accessToken, refreshToken, user } = await authService.login(input);
 
-            res.cookie('refreshToken', refreshToken, {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-                maxAge: 7 * 24 * 60 * 60 * 1000,
-            });
+            // SECURITY: Set refresh token with hardened cookie options
+            res.cookie('refreshToken', refreshToken, REFRESH_COOKIE_OPTIONS);
 
             return ApiResponse.success(res, { accessToken, user }, 'Logged in successfully');
         } catch (error) {
@@ -57,12 +65,8 @@ export class AuthController {
 
             const { accessToken, refreshToken: newRefreshToken } = await authService.refreshTokens(refreshToken);
 
-            res.cookie('refreshToken', newRefreshToken, {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                sameSite: 'lax',
-                maxAge: 7 * 24 * 60 * 60 * 1000,
-            });
+            // SECURITY: Rotate refresh token with hardened cookie options
+            res.cookie('refreshToken', newRefreshToken, REFRESH_COOKIE_OPTIONS);
 
             return ApiResponse.success(res, { accessToken }, 'Token refreshed successfully');
         } catch (error) {
@@ -75,7 +79,13 @@ export class AuthController {
             if (req.user) {
                 await authService.logout(req.user.userId);
             }
-            res.clearCookie('refreshToken');
+            // SECURITY: Clear cookie with matching path
+            res.clearCookie('refreshToken', { 
+                path: REFRESH_COOKIE_OPTIONS.path,
+                httpOnly: true,
+                secure: REFRESH_COOKIE_OPTIONS.secure,
+                sameSite: REFRESH_COOKIE_OPTIONS.sameSite
+            });
             return ApiResponse.success(res, null, 'Logged out successfully');
         } catch (error) {
             next(error);
