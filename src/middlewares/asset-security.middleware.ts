@@ -18,7 +18,7 @@ export const assetFramingGuard = (req: Request, res: Response, next: NextFunctio
         "frame-ancestors 'self' https://student-frontend-bice.vercel.app"
     );
 
-    // 2. Remove strict X-Frame-Options (Helmet default is SAMEORIGIN, which blocks localhost:3000)
+    // 2. Remove strict X-Frame-Options (Helmet default is SAMEORIGIN, which blocks localhost:)
     res.removeHeader('X-Frame-Options');
 
     next();

@@ -29,7 +29,7 @@ export class EmailService {
                         ${code}
                     </div>
                     <div style="text-align: center; margin-bottom: 20px;">
-                        <a href="${process.env.STUDENT_APP_URL || 'http://localhost:3000'}/verify-email" style="background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
+                        <a href="${process.env.STUDENT_APP_URL || 'http://localhost:'}/verify-email" style="background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
                             Verify Email
                         </a>
                     </div>
