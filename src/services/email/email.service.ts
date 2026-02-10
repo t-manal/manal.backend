@@ -1,21 +1,128 @@
 import nodemailer from 'nodemailer';
+import axios from 'axios';
 import { logger } from '../../utils/logger';
 
 export class EmailService {
     private transporter: nodemailer.Transporter;
+    private readonly maxRetries = 0; // SMTP fails fast, then fallback
+    private readonly brevoApiUrl = 'https://api.brevo.com/v3/smtp/email';
 
     constructor() {
+        // Phase 1: SMTP Hardening
+        // Explicitly define secure connection based on port 465
+        const smtpPort = Number(process.env.SMTP_PORT) || 2525;
+        const isSecure = smtpPort === 465;
+
         this.transporter = nodemailer.createTransport({
             host: process.env.SMTP_HOST || 'smtp.mailtrap.io',
-            port: Number(process.env.SMTP_PORT) || 2525,
+            port: smtpPort,
+            secure: isSecure, // true for 465, false for other ports
             auth: {
                 user: process.env.SMTP_USER,
                 pass: process.env.SMTP_PASS,
             },
+            // FAST TIMEOUTS (Mandatory for Railway)
+            // Prevent 120s hangs by failing fast (~10-15s max)
+            connectionTimeout: 10000, // 10s - Initial connection
+            greetingTimeout: 10000,   // 10s - Server greeting
+            socketTimeout: 15000,     // 15s - Inactivity
+            tls: {
+                minVersion: 'TLSv1.2',
+                rejectUnauthorized: true, // Fail if cert is invalid
+            },
+            // Debug logs in dev only
+            debug: process.env.NODE_ENV === 'development',
+            logger: process.env.NODE_ENV === 'development'
         });
+
+        // Verify connection on startup (non-blocking)
+        this.verifyConnection();
+    }
+
+    private async verifyConnection() {
+        try {
+            await this.transporter.verify();
+            logger.info('SMTP connection configuration verified successfully');
+        } catch (error: any) {
+            // Log warning but don't crash - app can still try fallback
+            logger.warn('SMTP connection failed on startup - Email service will rely on fallback', {
+                code: error.code,
+                message: error.message
+            });
+        }
+    }
+
+    /**
+     * Helper to parse sender Identity for Brevo API
+     * Returns { name, email }
+     */
+    private getSenderIdentity() {
+        const fromString = process.env.SMTP_FROM || 'LMS Support <support@lms.com>';
+        
+        // Try to parse "Name <email>" format
+        const match = fromString.match(/"?([^"]*)"?\s*<(.+)>/);
+        if (match) {
+            return { name: match[1].trim(), email: match[2].trim() };
+        }
+        
+        // Fallback if just email provided
+        return { name: 'LMS Support', email: fromString.trim() };
+    }
+
+    // Phase 2: HTTP API Fallback
+    private async sendViaBrevoFallback(email: string, subject: string, htmlContent: string) {
+        if (!process.env.BREVO_API_KEY) {
+            logger.error('SMTP failed and BREVO_API_KEY is missing - Email delivery completely failed', { email });
+            return { success: false, error: 'Email delivery failed (No Fallback Configured)' };
+        }
+
+        try {
+            const sender = this.getSenderIdentity();
+            
+            // Explicit 15s timeout for HTTP request
+            const response = await axios.post(
+                this.brevoApiUrl,
+                {
+                    sender,
+                    to: [{ email }],
+                    subject,
+                    htmlContent 
+                },
+                {
+                    headers: {
+                        'api-key': process.env.BREVO_API_KEY,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    timeout: 10000 // 10s strict timeout
+                }
+            );
+
+            logger.info('Email delivered via Brevo HTTP API (Fallback)', { 
+                email, 
+                messageId: response.data.messageId 
+            });
+            
+            return { success: true, messageId: response.data.messageId };
+
+        } catch (error: any) {
+            // Safe error logging
+            const safeError = {
+                status: error.response?.status,
+                code: error.code,
+                message: error.message,
+                data: error.response?.data
+            };
+            
+            logger.error('Brevo HTTP Fallback also failed', { email, error: safeError });
+            return { success: false, error: 'Email delivery failed (All channels)' };
+        }
     }
 
     async sendVerificationCode(email: string, code: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+        // Fix incorrect default URL logic (was 'http://localhost:')
+        const appUrl = process.env.STUDENT_APP_URL || 'http://localhost:3000';
+        
         const mailOptions = {
             from: process.env.SMTP_FROM || '"LMS Support" <support@lms.com>',
             to: email,
@@ -29,7 +136,7 @@ export class EmailService {
                         ${code}
                     </div>
                     <div style="text-align: center; margin-bottom: 20px;">
-                        <a href="${process.env.STUDENT_APP_URL || 'http://localhost:'}/verify-email" style="background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
+                        <a href="${appUrl}/verify-email" style="background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
                             Verify Email
                         </a>
                     </div>
@@ -39,18 +146,20 @@ export class EmailService {
         };
 
         try {
+            // Attempt 1: SMTP
             const info = await this.transporter.sendMail(mailOptions);
-            logger.info('Verification email sent', { email, messageId: info.messageId });
+            logger.info('Verification email sent via SMTP', { email, messageId: info.messageId });
             return { success: true, messageId: info.messageId };
         } catch (error: any) {
-            // Sanitize error logging - do not log full error object if it contains auth info
             const safeError = {
-                message: error.message,
                 code: error.code,
-                command: error.command
+                command: error.command,
+                message: error.message
             };
-            logger.error('Failed to send verification email', { email, error: safeError });
-            return { success: false, error: 'Email delivery failed' };
+            logger.warn('SMTP Delivery Failed - Switching to HTTP Fallback', { email, error: safeError });
+            
+            // Attempt 2: HTTP Fallback
+            return this.sendViaBrevoFallback(email, mailOptions.subject, mailOptions.html);
         }
     }
 
@@ -76,17 +185,20 @@ export class EmailService {
         };
 
         try {
+            // Attempt 1: SMTP
             const info = await this.transporter.sendMail(mailOptions);
-            logger.info('Password reset email sent', { email, messageId: info.messageId });
+            logger.info('Password reset email sent via SMTP', { email, messageId: info.messageId });
             return { success: true, messageId: info.messageId };
         } catch (error: any) {
             const safeError = {
-                message: error.message,
                 code: error.code,
-                command: error.command
+                command: error.command,
+                message: error.message
             };
-            logger.error('Failed to send password reset email', { email, error: safeError });
-            return { success: false, error: 'Email delivery failed' };
+            logger.warn('SMTP Delivery Failed - Switching to HTTP Fallback', { email, error: safeError });
+            
+            // Attempt 2: HTTP Fallback
+            return this.sendViaBrevoFallback(email, mailOptions.subject, mailOptions.html);
         }
     }
 }
