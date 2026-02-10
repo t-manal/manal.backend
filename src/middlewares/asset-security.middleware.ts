@@ -15,7 +15,7 @@ export const assetFramingGuard = (req: Request, res: Response, next: NextFunctio
     // 1. Allow iframe embedding from localhost:3000
     res.setHeader(
         'Content-Security-Policy',
-        "frame-ancestors 'self' http://localhost:3000"
+        "frame-ancestors 'self' https://student-frontend-bice.vercel.app"
     );
 
     // 2. Remove strict X-Frame-Options (Helmet default is SAMEORIGIN, which blocks localhost:3000)

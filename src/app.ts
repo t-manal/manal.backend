@@ -30,7 +30,8 @@ app.use(helmet());
 app.use(cors({
     origin: (requestOrigin, callback) => {
         const allowedOrigins = process.env.CORS_ORIGIN?.split(',') || [
-            'http://localhost:3000', 
+            'http://localhost:3000',
+            'https://student-frontend-bice.vercel.app', 
             'http://localhost:3001',
             'https://admin-lms-pi.vercel.app' // Explicitly added for production Vercel support
         ];
