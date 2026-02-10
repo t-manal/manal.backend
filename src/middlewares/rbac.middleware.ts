@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../utils/app-error';
+import { logger } from '../utils/logger';
 
 // =========================================================
 // CANONICAL ROLE DEFINITIONS (PHASE 2 - FINAL)
@@ -22,18 +23,17 @@ export const requireRoles = (allowedRoles: string[]) => {
 
         const userRole = req.user.role;
 
-        // Diagnostic Log
-        console.log(`[RBAC] Role: ${userRole}, Allowed: [${allowedRoles.join(', ')}]`);
-
-        if (!userRole) {
-             console.error('[RBAC] DENIED 403: No role claim found on request');
-             return next(new AppError('Forbidden: User has no role', 403));
-        }
-
         // Strict Check: User's role MUST be in the allowed list.
-        if (!allowedRoles.includes(userRole)) {
-            console.error(`[RBAC] DENIED 403: Role ${userRole} not in [${allowedRoles.join(', ')}]`);
-            // In Production, show generic message, but for this fix we keep it clear
+        if (!userRole || !allowedRoles.includes(userRole)) {
+            // SECURITY: Log this specific failure for audit
+            logger.warn(`RBAC Denial: ${req.user.userId || 'Unknown'} role '${userRole}' not in [${allowedRoles.join(', ')}]`, {
+                event: 'RBAC_DENIAL',
+                userId: req.user.userId,
+                actualRole: userRole,
+                requiredRoles: allowedRoles,
+                path: req.originalUrl
+            });
+            
             return next(new AppError('Forbidden: Insufficient permissions', 403));
         }
 

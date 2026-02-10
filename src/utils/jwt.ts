@@ -22,9 +22,6 @@ export interface TokenPayload {
     // Canonical Fields (Strictly enforced in new tokens)
     userId: string;
     role: string;
-    
-    // Allow legacy/additional fields (id, sub, iat, exp, etc.)
-    [key: string]: any;
 }
 
 export class JwtUtils {

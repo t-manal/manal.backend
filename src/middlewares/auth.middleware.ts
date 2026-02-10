@@ -38,9 +38,23 @@ export const authMiddleware = (req: Request, res: Response, next: NextFunction) 
             throw new AppError('Authentication token missing or invalid', 401);
         }
 
-        const payload = JwtUtils.verifyAccessToken(token);
+        // VERIFY: Raw decode first to handle potential legacy fields
+        const rawPayload = JwtUtils.verifyAccessToken(token) as any;
 
-        req.user = payload;
+        // NORMALIZE: Extract canonical userId from userId || id || sub
+        const userId = rawPayload.userId || rawPayload.id || rawPayload.sub;
+
+        if (!userId) {
+            throw new AppError('Invalid token: User identity missing', 401);
+        }
+
+        // STRICT ASSIGNMENT: Create a fresh object matching TokenPayload interface exactly
+        // This isolates legacy token handling to this single point in the codebase.
+        req.user = {
+            userId: userId as string,
+            role: (rawPayload.role as string) || '', // Default to empty, validated by RBAC/VerifiedGate
+        };
+
         next();
     } catch (error) {
         const message = error instanceof AppError ? error.message : 'Invalid or expired access token';

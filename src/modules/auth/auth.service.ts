@@ -35,10 +35,23 @@ export class AuthService {
             },
         });
 
-        // Send verification code asynchronously
-        this.sendVerificationCode(user.id, user.email).catch(err => {
-            console.error('Failed to send initial verification code:', err);
-        });
+        // Send verification code (Awaited for reliability)
+        // We catch errors so registration succeeds even if email fails (Token is returned)
+        try {
+            const emailResult = await this.sendVerificationCode(user.id, user.email);
+            if (!emailResult.success) {
+                 // Log is already handled inside sendVerificationCode
+                 // But we can add high-level context here if needed
+            }
+        } catch (error) {
+             // Should not happen as sendVerificationCode handles errors internally, 
+             // but catches unexpected crashes
+             const { logger } = await import('../../utils/logger');
+             logger.error('CRITICAL: Failed to send initial verification code during registration', { 
+                 userId: user.id, 
+                 error 
+             });
+        }
 
         return this.generateTokens(user.id, user.role);
     }
@@ -85,7 +98,26 @@ export class AuthService {
             },
         });
 
-        return await emailService.sendVerificationCode(email, code);
+        // DIAGNOSTIC LOGGING
+        const { logger } = await import('../../utils/logger');
+        logger.info('Attempting to send verification code', { 
+            userId, 
+            email: email.replace(/(.{2})(.*)(@.*)/, '$1***$3'),
+            route: 'sendVerificationCode' 
+        });
+
+        const result = await emailService.sendVerificationCode(email, code);
+
+        if (!result.success) {
+             logger.error('Failed to send verification email via EmailService', {
+                 userId,
+                 error: result.error
+             });
+        } else {
+             logger.info('Verification email sent successfully', { userId, messageId: result.messageId });
+        }
+
+        return result;
     }
 
     async verifyEmail(userId: string, code: string) {
