@@ -1,9 +1,17 @@
 import nodemailer from 'nodemailer';
 import { logger } from '../../utils/logger';
 
+export interface EmailOptions {
+    to: string;
+    subject: string;
+    html: string;
+    text?: string;
+}
+
 export class EmailService {
     private transporter: nodemailer.Transporter;
     private readonly brevoApiUrl = 'https://api.brevo.com/v3/smtp/email';
+    private readonly isProduction = process.env.NODE_ENV === 'production';
 
     constructor() {
         // Phase 1: SMTP Hardening
@@ -28,12 +36,14 @@ export class EmailService {
                 rejectUnauthorized: true, // Fail if cert is invalid
             },
             // Debug logs in dev only
-            debug: process.env.NODE_ENV === 'development',
-            logger: process.env.NODE_ENV === 'development'
+            debug: !this.isProduction,
+            logger: !this.isProduction
         });
 
-        // Verify connection on startup (non-blocking)
-        this.verifyConnection();
+        // Verify connection on startup (non-blocking) - Skip in production (API First)
+        if (!this.isProduction) {
+            this.verifyConnection();
+        }
     }
 
     private async verifyConnection() {
@@ -66,10 +76,15 @@ export class EmailService {
         return { name: 'LMS Support', email: fromString.trim() };
     }
 
-    // Phase 2: HTTP Fallback (Native Fetch)
+    /**
+     * Phase 2: HTTP Fallback (Native Fetch)
+     * Used as PRIMARY method in Production
+     */
     private async sendViaBrevoFallback(email: string, subject: string, htmlContent: string) {
-        if (!process.env.BREVO_API_KEY) {
-            logger.error('SMTP failed and BREVO_API_KEY is missing - Email delivery completely failed', { email });
+        const apiKey = process.env.BREVO_API_KEY?.trim();
+
+        if (!apiKey) {
+            logger.error('Email delivery failed: BREVO_API_KEY is missing/empty', { email });
             return { success: false, error: 'Email delivery failed (No Fallback Configured)' };
         }
 
@@ -82,7 +97,7 @@ export class EmailService {
             const response = await fetch(this.brevoApiUrl, {
                 method: 'POST',
                 headers: {
-                    'api-key': process.env.BREVO_API_KEY,
+                    'api-key': apiKey,
                     'Content-Type': 'application/json',
                     'Accept': 'application/json'
                 },
@@ -104,9 +119,10 @@ export class EmailService {
 
             const data = await response.json() as { messageId?: string };
 
-            logger.info('Email delivered via Brevo HTTP API (Fallback)', { 
+            logger.info('Email delivered via Brevo HTTP API', { 
                 email, 
-                messageId: data.messageId 
+                messageId: data.messageId,
+                mode: this.isProduction ? 'Primary (Production)' : 'Fallback (Dev/Error)'
             });
             
             return { success: true, messageId: data.messageId };
@@ -121,17 +137,51 @@ export class EmailService {
                 cause: error.cause
             };
             
-            logger.error('Brevo HTTP Fallback also failed', { email, error: safeError });
+            logger.error('Brevo HTTP API delivery attempt failed', { email, error: safeError });
             return { success: false, error: 'Email delivery failed (All channels)' };
         }
     }
 
-    async sendVerificationCode(email: string, code: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
-        // URL Fix: Correct localhost fallback without missing port
-        const appUrl = process.env.STUDENT_APP_URL || 'http://localhost:3000';
-        
+    /**
+     * Generic send method that creates the correct context for sending
+     */
+    async sendEmail(options: EmailOptions): Promise<{ success: boolean; messageId?: string; error?: string }> {
+        // PRODUCTION: Direct to HTTP API (API-First)
+        if (this.isProduction) {
+            return this.sendViaBrevoFallback(options.to, options.subject, options.html);
+        }
+
+        // DEVELOPMENT: Try SMTP -> Fallback to HTTP
         const mailOptions = {
             from: process.env.SMTP_FROM || '"LMS Support" <support@lms.com>',
+            to: options.to,
+            subject: options.subject,
+            text: options.text || options.html.replace(/<[^>]*>?/gm, ''), // Strip tags for text version if not provided
+            html: options.html,
+        };
+
+        try {
+            // Attempt 1: SMTP
+            const info = await this.transporter.sendMail(mailOptions);
+            logger.info('Email sent via SMTP', { email: options.to, messageId: info.messageId });
+            return { success: true, messageId: info.messageId };
+        } catch (error: any) {
+            const safeError = {
+                code: error.code,
+                command: error.command,
+                message: error.message
+            };
+            logger.warn('SMTP Delivery Failed - Switching to HTTP Fallback', { email: options.to, error: safeError });
+            
+            // Attempt 2: HTTP Fallback
+            return this.sendViaBrevoFallback(options.to, options.subject, options.html);
+        }
+    }
+
+    async sendVerificationCode(email: string, code: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+        const appUrl = process.env.STUDENT_APP_URL || 'http://localhost:3000';
+        
+        return this.sendEmail({
             to: email,
             subject: 'Email Verification Code',
             text: `Your verification code is: ${code}. It expires in 10 minutes.`,
@@ -149,30 +199,12 @@ export class EmailService {
                     </div>
                     <p style="color: #666; font-size: 14px;">This code will expire in 10 minutes.</p>
                 </div>
-            `,
-        };
-
-        try {
-            // Attempt 1: SMTP
-            const info = await this.transporter.sendMail(mailOptions);
-            logger.info('Verification email sent via SMTP', { email, messageId: info.messageId });
-            return { success: true, messageId: info.messageId };
-        } catch (error: any) {
-            const safeError = {
-                code: error.code,
-                command: error.command,
-                message: error.message
-            };
-            logger.warn('SMTP Delivery Failed - Switching to HTTP Fallback', { email, error: safeError });
-            
-            // Attempt 2: HTTP Fallback
-            return this.sendViaBrevoFallback(email, mailOptions.subject, mailOptions.html);
-        }
+            `
+        });
     }
 
     async sendPasswordResetEmail(email: string, resetLink: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
-        const mailOptions = {
-            from: process.env.SMTP_FROM || '"LMS Support" <support@lms.com>',
+        return this.sendEmail({
             to: email,
             subject: 'Reset Your Password',
             text: `You requested a password reset. Click here to reset: ${resetLink}. This link expires in 10 minutes.`,
@@ -188,25 +220,8 @@ export class EmailService {
                     <p style="color: #666; font-size: 14px;">This link will expire in 10 minutes.</p>
                     <p style="color: #999; font-size: 12px;">If you didn't request this, please ignore this email.</p>
                 </div>
-            `,
-        };
-
-        try {
-            // Attempt 1: SMTP
-            const info = await this.transporter.sendMail(mailOptions);
-            logger.info('Password reset email sent via SMTP', { email, messageId: info.messageId });
-            return { success: true, messageId: info.messageId };
-        } catch (error: any) {
-            const safeError = {
-                code: error.code,
-                command: error.command,
-                message: error.message
-            };
-            logger.warn('SMTP Delivery Failed - Switching to HTTP Fallback', { email, error: safeError });
-            
-            // Attempt 2: HTTP Fallback
-            return this.sendViaBrevoFallback(email, mailOptions.subject, mailOptions.html);
-        }
+            `
+        });
     }
 }
 
