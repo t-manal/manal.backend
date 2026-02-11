@@ -383,56 +383,77 @@ export class AdminPurchasesController {
     // GET /api/v1/admin/purchases/history/export
     public exportHistory = async (req: Request, res: Response) => {
         try {
-            // Fetch all manual completed payments
-            const payments = await prisma.paymentRecord.findMany({
-                where: {
-                    status: PaymentStatus.COMPLETED,
-                    provider: PaymentProvider.MANUAL_WHATSAPP
-                },
-                include: {
-                    user: { select: { email: true, firstName: true, lastName: true } },
-                    course: { select: { title: true, price: true, university: { select: { name: true } } } },
-                    enrollment: { select: { id: true } } // Request ID matches Enrollment ID logic in controller
-                },
-                orderBy: { createdAt: 'desc' }
-            });
-
-            // Flatten Data
-            const rows = payments.map(p => ({
-                RequestID: p.enrollmentId,
-                StudentName: `${p.user.firstName} ${p.user.lastName}`,
-                StudentEmail: p.user.email,
-                University: p.course.university.name,
-                Course: p.course.title,
-                CoursePrice: p.course.price,
-                PaidAmount: p.amount,
-                Currency: p.currency,
-                Date: p.createdAt.toISOString(),
-                TransactionID: p.id
-            }));
-
-            // Generate CSV
-            const headers = ['RequestID', 'StudentName', 'StudentEmail', 'University', 'Course', 'CoursePrice', 'PaidAmount', 'Currency', 'Date', 'TransactionID'];
-            const csvRows = [headers.join(',')];
-            
-            rows.forEach(row => {
-                const values = headers.map(header => {
-                    const val = (row as any)[header] || '';
-                    const escaped = String(val).replace(/"/g, '""'); // Escape double quotes
-                    return `"${escaped}"`;
-                });
-                csvRows.push(values.join(','));
-            });
-
-            const csvString = csvRows.join('\n');
-
             res.setHeader('Content-Type', 'text/csv');
             res.setHeader('Content-Disposition', `attachment; filename="payments_export_${new Date().toISOString().split('T')[0]}.csv"`);
-            res.send(csvString);
+
+            const headers = ['RequestID', 'StudentName', 'StudentEmail', 'University', 'Course', 'CoursePrice', 'PaidAmount', 'Currency', 'Date', 'TransactionID'];
+            res.write(headers.join(',') + '\n');
+
+            const BATCH_SIZE = 500;
+            let cursor: string | undefined;
+            let hasMore = true;
+
+            while (hasMore) {
+                const payments = await prisma.paymentRecord.findMany({
+                    take: BATCH_SIZE,
+                    skip: cursor ? 1 : 0,
+                    cursor: cursor ? { id: cursor } : undefined,
+                    where: {
+                        status: PaymentStatus.COMPLETED,
+                        provider: PaymentProvider.MANUAL_WHATSAPP
+                    },
+                    include: {
+                        user: { select: { email: true, firstName: true, lastName: true } },
+                        course: { select: { title: true, price: true, university: { select: { name: true } } } },
+                        enrollment: { select: { id: true } }
+                    },
+                    orderBy: { id: 'desc' } // Deterministic ordering for cursor
+                });
+
+                if (payments.length === 0) {
+                    hasMore = false;
+                    break;
+                }
+
+                const csvChunk = payments.map(p => {
+                    const row = {
+                        RequestID: p.enrollmentId,
+                        StudentName: `${p.user.firstName} ${p.user.lastName}`,
+                        StudentEmail: p.user.email,
+                        University: p.course.university.name,
+                        Course: p.course.title,
+                        CoursePrice: p.course.price,
+                        PaidAmount: p.amount,
+                        Currency: p.currency,
+                        Date: p.createdAt.toISOString(),
+                        TransactionID: p.id
+                    };
+                    
+                    return headers.map(header => {
+                        const val = (row as any)[header] || '';
+                        const escaped = String(val).replace(/"/g, '""');
+                        return `"${escaped}"`;
+                    }).join(',');
+                }).join('\n');
+
+                res.write(csvChunk + '\n');
+
+                if (payments.length < BATCH_SIZE) {
+                    hasMore = false;
+                } else {
+                    cursor = payments[payments.length - 1].id;
+                }
+            }
+
+            res.end();
 
         } catch (error) {
             console.error('[AdminPurchases] Export Error:', error);
-            return ApiResponse.error(res, error, 'Internal Server Error');
+            // If headers already sent, we can't send JSON error. End stream.
+            if (!res.headersSent) {
+                return ApiResponse.error(res, error, 'Internal Server Error');
+            }
+            res.end();
         }
     };
 
@@ -465,36 +486,55 @@ export class AdminPurchasesController {
                 }
             });
 
-            // 3. Total Outstanding Calculation (New Logic)
-            // Fetch ALL enrollments that are NOT Full/Inactive? 
-            // Better: Fetch all enrolled students and calculate remaining.
-            // Needs Filter: user is STUDENT, course price > 0.
+            // 3. Total Outstanding Calculation (Optimized)
+            // Strategy:
+            // a) Get all ACTIVE/PENDING enrollments (lightweight: id, course.price)
+            // b) Get total PAID per enrollment (groupBy enrollmentId)
+            // c) Match and calc outstanding = max(0, price - paid)
+            
+            // a) Fetch Enrollments
             const allEnrollments = await prisma.enrollment.findMany({
                 where: {
-                   // Optimization: Only where user is enrolled (Active or Pending)
-                   // We trust 'Pending' status implies 0 payment in old logic, but 'Active' might have remaining.
-                   // Actually, we should check ALL.
                    status: { in: [EnrollmentStatus.ACTIVE, EnrollmentStatus.PENDING] }
                 },
-                include: {
-                    course: { select: { price: true } },
-                    paymentRecords: { 
-                        where: { status: PaymentStatus.COMPLETED },
-                        select: { amount: true }
-                    }
+                select: {
+                    id: true,
+                    course: { select: { price: true } }
                 }
             });
 
+            // b) Fetch Payments Grouped
+            const paymentsByEnrollment = await prisma.paymentRecord.groupBy({
+                by: ['enrollmentId'],
+                where: {
+                    status: PaymentStatus.COMPLETED,
+                    // Note: We include ALL providers here to catch if they paid via other means?
+                    // Original logic used `include: paymentRecords` which filtered to COMPLETED.
+                    // Let's stick to COMPLETED.
+                },
+                _sum: {
+                    amount: true
+                }
+            });
+
+            // Convert payments to Map for O(1) lookup
+            const paidMap = new Map<string, number>();
+            paymentsByEnrollment.forEach(p => {
+                paidMap.set(p.enrollmentId, p._sum.amount?.toNumber() || 0);
+            });
+
+            // c) Calculate Outstanding
             let totalOutstanding = 0;
             for (const e of allEnrollments) {
                  const price = Number(e.course.price);
                  if (!isNaN(price) && price > 0) {
-                     const paid = e.paymentRecords.reduce((sum, p) => sum + Number(p.amount), 0);
+                     const paid = paidMap.get(e.id) || 0;
                      const remaining = Math.max(0, price - paid);
                      totalOutstanding += remaining;
                  }
             }
 
+            // Enrich Revenue By Course
             const courseIds = revenueByCourse.map(r => r.courseId);
             const courses = await prisma.course.findMany({
                 where: { id: { in: courseIds } },
