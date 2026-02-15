@@ -1,14 +1,14 @@
 import { Router } from 'express';
 import { AuthController } from './auth.controller';
 import { authMiddleware } from '../../middlewares/auth.middleware';
-import { authRateLimiter } from '../../middlewares/rate-limit.middleware';
+import { authRateLimiter, refreshRateLimiter } from '../../middlewares/rate-limit.middleware';
 
 const router = Router();
 const authController = new AuthController();
 
 router.post('/register', authRateLimiter, authController.register);
 router.post('/login', authRateLimiter, authController.login);
-router.post('/refresh', authRateLimiter, authController.refresh);
+router.post('/refresh', refreshRateLimiter, authController.refresh);
 // Logout should be accessible even if access token is expired, to clear cookies
 router.post('/logout', authController.logout);
 router.get('/me', authMiddleware, authController.me);

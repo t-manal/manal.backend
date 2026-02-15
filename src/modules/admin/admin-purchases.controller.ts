@@ -3,6 +3,7 @@ import prisma from '../../config/prisma';
 import { EnrollmentStatus, PaymentProvider, PaymentStatus } from '@prisma/client';
 import { z } from 'zod';
 import { ApiResponse } from '../../utils/api-response';
+import { Money } from '../../utils/money.util';
 
 export class AdminPurchasesController {
     // GET /api/v1/admin/purchases/pending
@@ -49,16 +50,16 @@ export class AdminPurchasesController {
 
             // Calculate Ledger State
             const ledger = pendingEnrollments.map(e => {
-                const price = Number(e.course.price);
-                const paidAmount = 0; // Filtered to 0
-                const remaining = isNaN(price) ? 0 : price;
+                const price = Money.fromNumber(e.course.price);
+                const paidAmount = Money.zero(); // Filtered to 0
+                const remaining = price; // Since paid is 0
                 
                 return {
                     ...e,
                     ledger: {
-                        price: isNaN(price) ? 0 : price,
-                        paidAmount,
-                        remaining,
+                        price: price.toNumber(),
+                        paidAmount: paidAmount.toNumber(),
+                        remaining: remaining.toNumber(),
                         paymentState: 'UNPAID'
                     }
                 };
@@ -115,22 +116,29 @@ export class AdminPurchasesController {
             });
 
             const ledger = enrollments.map(e => {
-                const price = Number(e.course.price);
-                const validPrice = isNaN(price) ? 0 : price;
-
-                const paidAmount = e.paymentRecords.reduce((sum, p) => sum + Number(p.amount), 0);
-                const remaining = Math.max(0, validPrice - paidAmount);
+                const price = Money.fromNumber(e.course.price);
+                
+                const paidAmount = e.paymentRecords.reduce(
+                    (sum, p) => sum.add(Money.fromNumber(p.amount)), 
+                    Money.zero()
+                );
+                
+                // remaining = max(0, price - paid)
+                let remaining = price.subtract(paidAmount);
+                if (remaining.lessThan(Money.zero())) {
+                    remaining = Money.zero();
+                }
                 
                 let paymentState = 'UNPAID';
-                if (paidAmount >= validPrice) paymentState = 'FULLY_PAID'; 
-                else if (paidAmount > 0) paymentState = 'PARTIALLY_PAID';
+                if (paidAmount.greaterThanOrEqualTo(price)) paymentState = 'FULLY_PAID'; 
+                else if (paidAmount.greaterThan(Money.zero())) paymentState = 'PARTIALLY_PAID';
 
                 return {
                     ...e,
                     ledger: {
-                        price: validPrice,
-                        paidAmount,
-                        remaining,
+                        price: price.toNumber(),
+                        paidAmount: paidAmount.toNumber(),
+                        remaining: remaining.toNumber(),
                         paymentState
                     }
                 };
@@ -151,50 +159,64 @@ export class AdminPurchasesController {
         });
 
         try {
-            const { amount } = schema.parse(req.body);
+            const { amount: rawAmount } = schema.parse(req.body);
 
-            const enrollment = await prisma.enrollment.findUnique({
-                where: { id: enrollmentId },
-                include: { course: true, paymentRecords: true }
-            });
-
-            if (!enrollment) {
-                return ApiResponse.error(res, null, 'Enrollment not found', 404);
-            }
-
-            // Calculate Financials
-            const currentPaid = enrollment.paymentRecords
-                .filter(p => p.status === PaymentStatus.COMPLETED)
-                .reduce((sum, p) => sum + Number(p.amount), 0);
-            
-            const price = Number(enrollment.course.price);
-            if (isNaN(price)) {
-                return ApiResponse.error(res, null, 'Critical Data Error: Course Price is Invalid', 500);
-            }
-
-            const remaining = Math.max(0, price - currentPaid);
-            const paymentAmount = amount !== undefined ? amount : remaining;
-
-            // Zero Price Settlement Rule
-            if (price === 0) {
-                 if (paymentAmount > 0) {
-                     return ApiResponse.error(res, null, 'Zero-priced courses cannot accept payments > 0', 400);
-                 }
-                 // Allow 0.
-            } else {
-                 if (paymentAmount <= 0) {
-                     return ApiResponse.error(res, null, 'Payment amount must be positive for paid courses', 400);
-                 }
-            }
-
-            // Strict Price Cap Validation
-            if ((currentPaid + paymentAmount) > price) {
-                return ApiResponse.error(res, null, `Payment exceeds course price. Max allowed: ${remaining}`, 400);
-            }
-
-            // Transaction: Create/Update Record -> Check Totals -> Update Status
+            // Phase 2 FIX: Transaction with Row-Level Lock
             const result = await prisma.$transaction(async (tx) => {
-                // 1. Handle Payment Record
+                // 1. Lock Enrollment Row [CRITICAL]
+                // SELECT FOR UPDATE enforces sequential access to this enrollment
+                const lockedEnrollments = await tx.$queryRaw`
+                    SELECT id FROM "enrollments" 
+                    WHERE id = ${enrollmentId}::uuid 
+                    FOR UPDATE NOWAIT
+                `; // Note: prisma raw query returns array
+
+                if (!Array.isArray(lockedEnrollments) || lockedEnrollments.length === 0) {
+                     // If we can't find it, it might not exist.
+                     // But if it's locked by someone else, NOWAIT throws error (handled in catch)
+                     throw new Error('Enrollment not found (or locked)');
+                }
+
+                // 2. Fetch Fresh Data (Safe now)
+                const enrollment = await tx.enrollment.findUniqueOrThrow({
+                    where: { id: enrollmentId },
+                    include: { course: true, paymentRecords: true }
+                });
+
+                // Calculate Financials
+                const currentPaid = enrollment.paymentRecords
+                    .filter(p => p.status === PaymentStatus.COMPLETED)
+                    .reduce((sum, p) => sum.add(Money.fromNumber(p.amount)), Money.zero());
+                
+                const price = Money.fromNumber(enrollment.course.price);
+                // remaining = max(0, price - paid)
+                let remaining = price.subtract(currentPaid);
+                if (remaining.lessThan(Money.zero())) remaining = Money.zero();
+
+                const paymentAmount = rawAmount !== undefined 
+                    ? Money.fromNumber(rawAmount) 
+                    : remaining;
+
+                // Zero Price Settlement Rule
+                if (price.equals(Money.zero())) {
+                     if (paymentAmount.greaterThan(Money.zero())) {
+                         throw new Error('Zero-priced courses cannot accept payments > 0');
+                     }
+                } else {
+                     if (paymentAmount.lessThanOrEqualTo(Money.zero())) {
+                         throw new Error('Payment amount must be positive for paid courses');
+                     }
+                }
+
+                // Strict Price Cap Validation
+                // newTotal = current + payment
+                const newTotalPaid = currentPaid.add(paymentAmount);
+                
+                if (newTotalPaid.greaterThan(price)) {
+                    throw new Error(`Payment exceeds course price. Max allowed: ${remaining.toString()}`);
+                }
+
+                // 3. Handle Payment Record
                 const pendingRecord = await tx.paymentRecord.findFirst({
                     where: {
                         enrollmentId: enrollment.id,
@@ -207,7 +229,7 @@ export class AdminPurchasesController {
                         where: { id: pendingRecord.id },
                         data: {
                             status: PaymentStatus.COMPLETED,
-                            amount: paymentAmount,
+                            amount: paymentAmount.toDecimal(),
                             provider: PaymentProvider.MANUAL_WHATSAPP,
                             providerEventId: `MANUAL_APPROVE_${Date.now()}_${req.user?.userId || 'ADMIN'}`
                         }
@@ -220,20 +242,17 @@ export class AdminPurchasesController {
                             courseId: enrollment.courseId,
                             provider: PaymentProvider.MANUAL_WHATSAPP,
                             status: PaymentStatus.COMPLETED,
-                            amount: paymentAmount,
+                            amount: paymentAmount.toDecimal(),
                             providerEventId: `MANUAL_APPROVE_${Date.now()}_${req.user?.userId || 'ADMIN'}`
                         }
                     });
                 }
 
-                // 2. Re-Calculate Totals
-                const newTotalPaid = currentPaid + Number(paymentAmount);
-                
-                // 3. Enforce New Access Rule (Any payment > 0 => Active)
+                // 4. Enforce New Access Rule (Any payment > 0 => Active)
                 let newStatus: EnrollmentStatus = EnrollmentStatus.PENDING;
                 let activatedAt = enrollment.activatedAt;
                 
-                if (newTotalPaid > 0 || (price === 0 && newTotalPaid === 0)) {
+                if (newTotalPaid.greaterThan(Money.zero()) || (price.equals(Money.zero()) && newTotalPaid.equals(Money.zero()))) {
                      newStatus = EnrollmentStatus.ACTIVE;
                      if (!activatedAt) activatedAt = new Date();
                 }
@@ -247,20 +266,33 @@ export class AdminPurchasesController {
                 });
 
                 return { updatedEnrollment, newTotalPaid, price };
+            }, {
+                timeout: 5000, // 5s timeout to acquire lock
+                isolationLevel: 'ReadCommitted' // Sufficient with FOR UPDATE
             });
 
             return ApiResponse.success(res, { 
                 enrollment: result.updatedEnrollment,
                 ledger: {
-                    paid: result.newTotalPaid,
-                    price: result.price,
-                    remaining: Math.max(0, result.price - result.newTotalPaid),
+                    paid: result.newTotalPaid.toNumber(),
+                    price: result.price.toNumber(),
+                    remaining: result.price.subtract(result.newTotalPaid).toNumber(),
                     status: result.updatedEnrollment.status
                 }
             }, 'Payment recorded');
 
-        } catch (error) {
+        } catch (error: any) {
             console.error('[AdminPurchases] Mark Paid Error:', error);
+            
+            // Handle Lock Timeout
+            if (error.code === 'P2010' || error.message?.includes('could not obtain lock')) {
+                return ApiResponse.error(res, null, 'System is busy processing another payment for this enrollment. Please try again.', 409);
+            }
+            // Handle Logic Errors
+            if (error.message?.includes('exceeds course price') || error.message?.includes('Zero-priced')) {
+                return ApiResponse.error(res, null, error.message, 400); 
+            }
+
             return ApiResponse.error(res, error, 'Internal Server Error');
         }
     };
@@ -273,7 +305,8 @@ export class AdminPurchasesController {
         });
 
         try {
-            const { amount } = schema.parse(req.body);
+            const { amount: rawAmount } = schema.parse(req.body);
+            const amount = Money.fromNumber(rawAmount);
 
             const payment = await prisma.paymentRecord.findUnique({
                 where: { id: paymentId },
@@ -298,24 +331,21 @@ export class AdminPurchasesController {
                      id: { not: paymentId } 
                 }
             });
-            const potentialTotal = (othersSum._sum.amount?.toNumber() || 0) + amount;
-            const price = Number(payment.enrollment.course.price);
+            const othersTotal = Money.fromNumber(othersSum._sum.amount?.toNumber() || 0);
+            const potentialTotal = othersTotal.add(amount);
+            const price = Money.fromNumber(payment.enrollment.course.price);
 
-             if (isNaN(price)) {
-                return ApiResponse.error(res, null, 'Critical Data Error: Course Price is Invalid', 500);
-            }
-
-            if (potentialTotal > price) {
-                 return ApiResponse.error(res, null, `New total (${potentialTotal}) exceeds price (${price})`, 400);
+            if (potentialTotal.greaterThan(price)) {
+                 return ApiResponse.error(res, null, `New total (${potentialTotal.toString()}) exceeds price (${price.toString()})`, 400);
             }
 
             // Zero Price Rule for Edits
-            if (price === 0) {
-                if (amount > 0) {
+            if (price.equals(Money.zero())) {
+                if (amount.greaterThan(Money.zero())) {
                     return ApiResponse.error(res, null, 'Zero-priced courses cannot accept payments > 0', 400);
                 }
             } else {
-                if (amount <= 0) {
+                if (amount.lessThanOrEqualTo(Money.zero())) {
                     return ApiResponse.error(res, null, 'Payment amount must be positive for paid courses', 400);
                 }
             }
@@ -330,7 +360,7 @@ export class AdminPurchasesController {
                         {
                             action: 'UPDATE_AMOUNT',
                             previousAmount: Number(payment.amount),
-                            newAmount: amount,
+                            newAmount: amount.toNumber(),
                             date: new Date().toISOString(),
                             adminId: req.user?.userId || 'ADMIN'
                         }
@@ -341,7 +371,7 @@ export class AdminPurchasesController {
                 await tx.paymentRecord.update({
                     where: { id: paymentId },
                     data: {
-                        amount: amount,
+                        amount: amount.toDecimal(),
                         rawPayload: auditLog
                     }
                 });
@@ -350,7 +380,7 @@ export class AdminPurchasesController {
                 let newStatus: EnrollmentStatus = EnrollmentStatus.PENDING;
                 let activatedAt = payment.enrollment.activatedAt;
 
-                if (potentialTotal > 0 || (price === 0 && potentialTotal === 0)) {
+                if (potentialTotal.greaterThan(Money.zero()) || (price.equals(Money.zero()) && potentialTotal.equals(Money.zero()))) {
                      newStatus = EnrollmentStatus.ACTIVE;
                      if (!activatedAt) activatedAt = new Date();
                 }
@@ -370,7 +400,7 @@ export class AdminPurchasesController {
             return ApiResponse.success(res, {
                 enrollment: result.updatedEnrollment,
                 ledger: {
-                    totalPaid: result.totalPaid
+                    totalPaid: result.totalPaid.toNumber()
                 }
             }, 'Payment updated');
 
@@ -440,6 +470,7 @@ export class AdminPurchasesController {
 
                 if (payments.length < BATCH_SIZE) {
                     hasMore = false;
+                    cursor = undefined; // safety
                 } else {
                     cursor = payments[payments.length - 1].id;
                 }
@@ -486,13 +517,7 @@ export class AdminPurchasesController {
                 }
             });
 
-            // 3. Total Outstanding Calculation (Optimized)
-            // Strategy:
-            // a) Get all ACTIVE/PENDING enrollments (lightweight: id, course.price)
-            // b) Get total PAID per enrollment (groupBy enrollmentId)
-            // c) Match and calc outstanding = max(0, price - paid)
-            
-            // a) Fetch Enrollments
+            // 3. Total Outstanding Calculation
             const allEnrollments = await prisma.enrollment.findMany({
                 where: {
                    status: { in: [EnrollmentStatus.ACTIVE, EnrollmentStatus.PENDING] }
@@ -503,38 +528,35 @@ export class AdminPurchasesController {
                 }
             });
 
-            // b) Fetch Payments Grouped
             const paymentsByEnrollment = await prisma.paymentRecord.groupBy({
                 by: ['enrollmentId'],
                 where: {
                     status: PaymentStatus.COMPLETED,
-                    // Note: We include ALL providers here to catch if they paid via other means?
-                    // Original logic used `include: paymentRecords` which filtered to COMPLETED.
-                    // Let's stick to COMPLETED.
                 },
                 _sum: {
                     amount: true
                 }
             });
 
-            // Convert payments to Map for O(1) lookup
-            const paidMap = new Map<string, number>();
+            const paidMap = new Map<string, Money>();
             paymentsByEnrollment.forEach(p => {
-                paidMap.set(p.enrollmentId, p._sum.amount?.toNumber() || 0);
+                paidMap.set(p.enrollmentId, Money.fromNumber(p._sum.amount?.toNumber() || 0));
             });
 
-            // c) Calculate Outstanding
-            let totalOutstanding = 0;
+            let totalOutstanding = Money.zero();
             for (const e of allEnrollments) {
-                 const price = Number(e.course.price);
-                 if (!isNaN(price) && price > 0) {
-                     const paid = paidMap.get(e.id) || 0;
-                     const remaining = Math.max(0, price - paid);
-                     totalOutstanding += remaining;
+                 const price = Money.fromNumber(e.course.price);
+                 if (price.greaterThan(Money.zero())) {
+                     const paid = paidMap.get(e.id) || Money.zero();
+                     const remaining = price.subtract(paid);
+                     
+                     if (remaining.greaterThan(Money.zero())) {
+                        totalOutstanding = totalOutstanding.add(remaining);
+                     }
                  }
             }
 
-            // Enrich Revenue By Course
+            // Enrich Revenue
             const courseIds = revenueByCourse.map(r => r.courseId);
             const courses = await prisma.course.findMany({
                 where: { id: { in: courseIds } },
@@ -544,13 +566,13 @@ export class AdminPurchasesController {
             const enrichedRevenue = revenueByCourse.map(r => ({
                 courseId: r.courseId,
                 title: courses.find(c => c.id === r.courseId)?.title || 'Unknown',
-                amount: r._sum.amount || 0,
+                amount: r._sum.amount ? r._sum.amount.toNumber() : 0,
                 count: r._count.id
             }));
 
             return ApiResponse.success(res, {
-                total: totalRevenue._sum.amount || 0,
-                outstanding: totalOutstanding,
+                total: totalRevenue._sum.amount ? totalRevenue._sum.amount.toNumber() : 0,
+                outstanding: totalOutstanding.toNumber(),
                 byCourse: enrichedRevenue
             });
         } catch (error) {
@@ -565,11 +587,7 @@ export class AdminPurchasesController {
             const days = Number(req.query.days) || 14;
             const endDate = new Date();
             const startDate = new Date();
-            startDate.setDate(endDate.getDate() - days + 1); // +1 to include today in the count
-
-            // Use groupBy to aggregate by day (requires some post-processing or raw query)
-            // Prisma groupBy on DateTime is exact match. We need by date.
-            // Raw query is best for Date Trunc.
+            startDate.setDate(endDate.getDate() - days + 1); 
             
             const revenueByDay: any[] = await prisma.$queryRaw`
                 SELECT 
@@ -584,18 +602,13 @@ export class AdminPurchasesController {
                 ORDER BY date ASC
             `;
 
-            // Process and Zero-Fill
             const series: { date: string; amount: number }[] = [];
-            
-            // Map DB results to a lookup
             const dbMap = new Map<string, number>();
             revenueByDay.forEach((row: any) => {
-                // Ensure date is string YYYY-MM-DD
                 const d = new Date(row.date).toISOString().split('T')[0];
                 dbMap.set(d, Number(row.amount));
             });
 
-            // Generate full range
             for (let i = 0; i < days; i++) {
                 const d = new Date();
                 d.setDate(d.getDate() - (days - 1 - i));

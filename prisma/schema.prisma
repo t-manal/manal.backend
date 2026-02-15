@@ -71,6 +71,7 @@ model User {
 
   verificationCodes   VerificationCode[]
   passwordResetTokens PasswordResetToken[]
+  refreshTokens       RefreshToken[]
 
   @@map("users")
 }
@@ -331,4 +332,21 @@ model EnrollmentPartLock {
   @@index([enrollmentId])
   @@index([partId])
   @@map("enrollment_part_locks")
+}
+
+model RefreshToken {
+  id         String    @id @default(uuid())
+  userId     String
+  token      String    @unique
+  deviceInfo String?
+  ipAddress  String?
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@map("refresh_tokens")
 }
