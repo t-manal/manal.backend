@@ -242,7 +242,7 @@ async function seedEnrollmentsV2(studentIds: string[], courseIds: string[]) {
                         provider: PaymentProvider.MANUAL_WHATSAPP,
                         providerEventId: `seed-${enrollment.id}`,
                         amount: course?.price || 0,
-                        currency: 'USD',
+                        currency: 'SAR',
                         status: PaymentStatus.COMPLETED,
                     }
                 });

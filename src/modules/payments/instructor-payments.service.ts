@@ -49,7 +49,7 @@ export class InstructorPaymentsService {
 
         return {
             totalRevenue: totalRevenueAgg._sum.amount?.toNumber() || 0,
-            currency: 'SAR', // Defaulting to SAR or USD based on system preference (schema says USD default but context implies region)
+            currency: 'SAR', // System currency is SAR
             series: recentPayments.map(p => ({
                 amount: p.amount.toNumber(),
                 date: p.createdAt,
