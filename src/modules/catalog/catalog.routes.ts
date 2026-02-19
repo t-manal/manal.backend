@@ -27,6 +27,7 @@ router.get('/courses/:id', publicRateLimiter, (req, res, next) => catalogControl
 
 // Protected Routes (Admin/Instructor Management)
 router.post('/universities', authMiddleware, requirePanelRole, (req, res, next) => catalogController.createUniversity(req, res, next));
+router.delete('/universities/:id', authMiddleware, requirePanelRole, (req, res, next) => catalogController.deleteUniversity(req, res, next));
 
 // Logo Management
 const upload = multer({

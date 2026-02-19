@@ -84,6 +84,52 @@ export class CatalogService {
         return prisma.university.create({ data });
     }
 
+    async deleteUniversityCascade(universityId: string) {
+        const university = await this.getUniversity(universityId);
+
+        return prisma.$transaction(async (tx) => {
+            const courses = await tx.course.findMany({
+                where: { universityId },
+                select: { id: true },
+            });
+
+            const courseIds = courses.map((course) => course.id);
+
+            let deletedPayments = 0;
+            let deletedEnrollments = 0;
+            let deletedCourses = 0;
+
+            if (courseIds.length > 0) {
+                const paymentDeletion = await tx.paymentRecord.deleteMany({
+                    where: { courseId: { in: courseIds } },
+                });
+                deletedPayments = paymentDeletion.count;
+
+                const enrollmentDeletion = await tx.enrollment.deleteMany({
+                    where: { courseId: { in: courseIds } },
+                });
+                deletedEnrollments = enrollmentDeletion.count;
+
+                const courseDeletion = await tx.course.deleteMany({
+                    where: { id: { in: courseIds } },
+                });
+                deletedCourses = courseDeletion.count;
+            }
+
+            await tx.university.delete({ where: { id: universityId } });
+
+            return {
+                universityId,
+                universityName: university.name,
+                deleted: {
+                    courses: deletedCourses,
+                    enrollments: deletedEnrollments,
+                    paymentRecords: deletedPayments,
+                },
+            };
+        });
+    }
+
     async getCourseDetailsPublic(courseId: string) {
         const course = await prisma.course.findFirst({
             where: {

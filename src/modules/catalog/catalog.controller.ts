@@ -41,6 +41,16 @@ export class CatalogController {
         }
     }
 
+    async deleteUniversity(req: Request, res: Response, next: NextFunction) {
+        try {
+            const { id } = req.params;
+            const data = await catalogService.deleteUniversityCascade(id);
+            return ApiResponse.success(res, data, 'University and related data deleted successfully');
+        } catch (error) {
+            next(error);
+        }
+    }
+
     // Admin endpoint - includes drafts
     async getUniversityCourses(req: Request, res: Response, next: NextFunction) {
         try {
