@@ -6,6 +6,7 @@ export interface EmailOptions {
     subject: string;
     html: string;
     text?: string;
+    replyTo?: string;
 }
 
 export class EmailService {
@@ -80,7 +81,7 @@ export class EmailService {
      * Phase 2: HTTP Fallback (Native Fetch)
      * Used as PRIMARY method in Production
      */
-    private async sendViaBrevoFallback(email: string, subject: string, htmlContent: string) {
+    private async sendViaBrevoFallback(email: string, subject: string, htmlContent: string, replyTo?: string) {
         const apiKey = process.env.BREVO_API_KEY?.trim();
 
         if (!apiKey) {
@@ -105,7 +106,8 @@ export class EmailService {
                     sender,
                     to: [{ email }],
                     subject,
-                    htmlContent 
+                    htmlContent,
+                    ...(replyTo ? { replyTo: { email: replyTo } } : {})
                 }),
                 signal: controller.signal
             });
@@ -148,7 +150,7 @@ export class EmailService {
     async sendEmail(options: EmailOptions): Promise<{ success: boolean; messageId?: string; error?: string }> {
         // PRODUCTION: Direct to HTTP API (API-First)
         if (this.isProduction) {
-            return this.sendViaBrevoFallback(options.to, options.subject, options.html);
+            return this.sendViaBrevoFallback(options.to, options.subject, options.html, options.replyTo);
         }
 
         // DEVELOPMENT: Try SMTP -> Fallback to HTTP
@@ -158,6 +160,7 @@ export class EmailService {
             subject: options.subject,
             text: options.text || options.html.replace(/<[^>]*>?/gm, ''), // Strip tags for text version if not provided
             html: options.html,
+            ...(options.replyTo ? { replyTo: options.replyTo } : {}),
         };
 
         try {
@@ -174,7 +177,7 @@ export class EmailService {
             logger.warn('SMTP Delivery Failed - Switching to HTTP Fallback', { email: options.to, error: safeError });
             
             // Attempt 2: HTTP Fallback
-            return this.sendViaBrevoFallback(options.to, options.subject, options.html);
+            return this.sendViaBrevoFallback(options.to, options.subject, options.html, options.replyTo);
         }
     }
 

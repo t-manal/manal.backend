@@ -15,6 +15,7 @@ import enrollmentRoutes from './modules/enrollments/enrollment.routes';
 import studentCourseRoutes from './modules/courses/student-content.routes';
 import progressRoutes from './modules/progress/progress.routes';
 import userRoutes from './modules/users/users.routes';
+import contactRoutes from './modules/contact/contact.routes';
 
 // Phase 8: V2 Clean App - Removed orphaned modules:
 // - engagement (Comment/Like removed from schema)
@@ -87,6 +88,7 @@ app.use('/api/v1/enrollments', enrollmentRoutes);
 app.use('/api/v1/courses', studentCourseRoutes);
 app.use('/api/v1/progress', progressRoutes);
 app.use('/api/v1/students', userRoutes);
+app.use('/api/v1/contact', contactRoutes);
 
 // Payments (Admin)
 import instructorPaymentsRoutes from './modules/payments/instructor-payments.routes';

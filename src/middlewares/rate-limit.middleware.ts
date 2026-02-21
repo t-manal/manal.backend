@@ -79,3 +79,11 @@ export const publicRateLimiter = createLimiter(
     60, // 60 requests
     'Too many requests, please slow down.'
 );
+
+// 6. Public Contact Form (Anti-spam)
+export const contactRateLimiter = createLimiter(
+    'contact',
+    60 * 1000, // 1 minute
+    5, // 5 submissions per minute per IP/user
+    'Too many contact messages, please try again shortly.'
+);
