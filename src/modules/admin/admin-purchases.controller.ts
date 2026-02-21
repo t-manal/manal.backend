@@ -167,7 +167,7 @@ export class AdminPurchasesController {
                 // SELECT FOR UPDATE enforces sequential access to this enrollment
                 const lockedEnrollments = await tx.$queryRaw`
                     SELECT id FROM "enrollments" 
-                    WHERE id = ${enrollmentId}::uuid 
+                    WHERE id = ${enrollmentId}
                     FOR UPDATE NOWAIT
                 `; // Note: prisma raw query returns array
 
@@ -284,8 +284,11 @@ export class AdminPurchasesController {
         } catch (error: any) {
             console.error('[AdminPurchases] Mark Paid Error:', error);
             
-            // Handle Lock Timeout
-            if (error.code === 'P2010' || error.message?.includes('could not obtain lock')) {
+            // Handle lock contention only (Postgres 55P03 with NOWAIT)
+            if (
+                (error.code === 'P2010' && error.meta?.code === '55P03') ||
+                error.message?.includes('could not obtain lock')
+            ) {
                 return ApiResponse.error(res, null, 'System is busy processing another payment for this enrollment. Please try again.', 409);
             }
             // Handle Logic Errors
