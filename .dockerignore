@@ -17,3 +17,8 @@ __tests__
 jest.config.js
 tsconfig.json
 README.md
+backups
+*.sql.gz
+*.txt
+*.md
+!DEPLOYMENT.md

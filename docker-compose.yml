@@ -1,0 +1,205 @@
+version: "3.9"
+
+# ============================================================
+# LMS Marketplace — Docker Compose
+# Containers: postgres, redis, api, worker, nginx
+# ============================================================
+
+networks:
+  lms-network:
+    driver: bridge
+
+volumes:
+  pgdata:
+    driver: local
+  redisdata:
+    driver: local
+  certs:
+    driver: local
+  certbot-webroot:
+    driver: local
+
+services:
+
+  # ----------------------------------------------------------
+  # PostgreSQL
+  # ----------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: lms-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - lms-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+        reservations:
+          memory: 512m
+
+  # ----------------------------------------------------------
+  # Redis
+  # ----------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: lms-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 200mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redisdata:/data
+    networks:
+      - lms-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+        reservations:
+          memory: 128m
+
+  # ----------------------------------------------------------
+  # API Server
+  # ----------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: lms-app:latest
+    container_name: lms-api
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      CONTAINER_MODE: api
+    entrypoint: ["./entrypoint.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - lms-network
+    # Port 4000 NOT exposed to host — only accessible via Nginx on internal network
+    expose:
+      - "4000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+        reservations:
+          memory: 256m
+
+  # ----------------------------------------------------------
+  # PDF Worker (same image as API, different CMD)
+  # ----------------------------------------------------------
+  worker:
+    image: lms-app:latest
+    container_name: lms-worker
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      CONTAINER_MODE: worker
+    entrypoint: ["./entrypoint.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    networks:
+      - lms-network
+    # tmpfs for LibreOffice temp files — prevents disk I/O bottleneck
+    # and auto-cleans on restart
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+    deploy:
+      resources:
+        limits:
+          # LibreOffice can spike to 500MB per conversion — give headroom
+          memory: 2g
+        reservations:
+          memory: 512m
+
+  # ----------------------------------------------------------
+  # Nginx — Reverse Proxy + SSL
+  # ----------------------------------------------------------
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: lms-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - certs:/etc/letsencrypt:ro
+      - certbot-webroot:/var/www/certbot:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - lms-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+        reservations:
+          memory: 64m
+
+  # ----------------------------------------------------------
+  # Certbot — SSL Certificate Manager
+  # Runs once to issue cert, then every 12h to renew
+  # ----------------------------------------------------------
+  certbot:
+    image: certbot/certbot:latest
+    container_name: lms-certbot
+    volumes:
+      - certs:/etc/letsencrypt
+      - certbot-webroot:/var/www/certbot
+    networks:
+      - lms-network
+    # This container exits after issuing/renewing the cert
+    # Nginx is reloaded via the deploy.sh script after renewal
+    entrypoint: >
+      /bin/sh -c "trap exit TERM;
+      while :; do
+        certbot renew --webroot -w /var/www/certbot --quiet;
+        sleep 12h & wait $${!};
+      done"
+    deploy:
+      resources:
+        limits:
+          memory: 64m
