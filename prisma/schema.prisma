@@ -176,6 +176,7 @@ model PaymentRecord {
   providerTransactionId String?
   providerEventId       String          @unique // For webhook idempotency
   amount                Decimal         @db.Decimal(10, 2)
+  agreedPrice           Decimal         @default(0) @db.Decimal(10, 2)
   currency              String          @default("SAR")
   status                PaymentStatus   @default(PENDING)
   rawPayload            Json?

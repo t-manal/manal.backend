@@ -50,7 +50,9 @@ export class AdminPurchasesController {
 
             // Calculate Ledger State
             const ledger = pendingEnrollments.map(e => {
-                const price = Money.fromNumber(e.course.price);
+                const agreedPrice = e.paymentRecords?.[0]?.agreedPrice
+                    ?? e.course.price;
+                const price = Money.fromNumber(agreedPrice);
                 const paidAmount = Money.zero(); // Filtered to 0
                 const remaining = price; // Since paid is 0
                 
@@ -116,7 +118,9 @@ export class AdminPurchasesController {
             });
 
             const ledger = enrollments.map(e => {
-                const price = Money.fromNumber(e.course.price);
+                const agreedPrice = e.paymentRecords?.[0]?.agreedPrice
+                    ?? e.course.price;
+                const price = Money.fromNumber(agreedPrice);
                 
                 const paidAmount = e.paymentRecords.reduce(
                     (sum, p) => sum.add(Money.fromNumber(p.amount)), 
@@ -188,7 +192,9 @@ export class AdminPurchasesController {
                     .filter(p => p.status === PaymentStatus.COMPLETED)
                     .reduce((sum, p) => sum.add(Money.fromNumber(p.amount)), Money.zero());
                 
-                const price = Money.fromNumber(enrollment.course.price);
+                const agreedPrice = enrollment.paymentRecords?.[0]?.agreedPrice
+                    ?? enrollment.course.price;
+                const price = Money.fromNumber(agreedPrice);
                 // remaining = max(0, price - paid)
                 let remaining = price.subtract(currentPaid);
                 if (remaining.lessThan(Money.zero())) remaining = Money.zero();

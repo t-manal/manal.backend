@@ -1,0 +1,1 @@
+ALTER TABLE "payment_records" ADD COLUMN IF NOT EXISTS "agreedPrice" DECIMAL(10,2) NOT NULL DEFAULT 0;

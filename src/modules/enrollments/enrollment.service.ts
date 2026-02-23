@@ -66,6 +66,7 @@ export class EnrollmentService {
                     courseId,
                     provider: PaymentProvider.MANUAL_WHATSAPP,
                     amount: course.price,
+                    agreedPrice: course.price,
                     status: PaymentStatus.PENDING,
                     providerEventId: `REQ_${enrollment.id}_${Date.now()}`,
                 },
