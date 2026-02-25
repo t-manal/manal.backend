@@ -1,3 +1,4 @@
+  GNU nano 7.2                                                                    entrypoint.sh                                                                             
 #!/bin/bash
 set -e
 
@@ -11,20 +12,24 @@ echo "[Entrypoint] Validating migration SQL encoding..."
 node prisma/validate-migrations.js
 echo "[Entrypoint] Migration SQL encoding check passed."
 
-# Wait for PostgreSQL to be ready (extra safety beyond depends_on healthcheck)
-echo "[Entrypoint] Waiting for PostgreSQL..."
-until npx prisma db execute --stdin <<< "SELECT 1" > /dev/null 2>&1; do
-  echo "[Entrypoint] PostgreSQL not ready yet, retrying in 2s..."
+echo "[Entrypoint] Running database migrations (with retry)..."
+MAX_TRIES=60
+TRY=1
+
+until npx prisma migrate deploy --schema prisma/schema.prisma >/dev/null 2>&1; do
+  echo "[Entrypoint] migrate deploy failed (try $TRY/$MAX_TRIES). Retrying in 2s..."
+  TRY=$((TRY+1))
+  if [ "$TRY" -gt "$MAX_TRIES" ]; then
+    echo "[Entrypoint] ERROR: PostgreSQL not reachable or migration failed repeatedly."
+    echo "[Entrypoint] Printing last migrate deploy output:"
+    npx prisma migrate deploy --schema prisma/schema.prisma
+    exit 1
+  fi
   sleep 2
 done
-echo "[Entrypoint] PostgreSQL is ready."
 
-# Run Prisma migrations
-echo "[Entrypoint] Running database migrations..."
-npx prisma migrate deploy
 echo "[Entrypoint] Migrations complete."
 
-# Start the appropriate process based on CONTAINER_MODE
 if [ "${CONTAINER_MODE}" = "worker" ]; then
   echo "[Entrypoint] Starting PDF Worker..."
   exec node dist/workers/pdf.worker.js
