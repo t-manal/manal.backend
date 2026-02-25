@@ -1,0 +1,5 @@
+# Keep deployment-sensitive text files in LF form for Linux containers.
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sql text eol=lf

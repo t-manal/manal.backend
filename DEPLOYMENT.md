@@ -254,3 +254,34 @@ docker system prune -f
 | CORS error في الـ frontend | `CORS_ORIGIN` غير صحيح | تحقق من القيمة في `.env.production` |
 | قاعدة البيانات لا تتصل | `DATABASE_URL` خاطئ | تأكد أنه يشير إلى `postgres:5432` وليس Railway |
 | Bunny webhook لا يصل | URL لم يتحدث في Bunny dashboard | راجع الخطوة 6 |
+
+---
+
+## Prisma Migration Encoding Recovery (P3018 / P3009)
+
+If deploy fails with `string contains embedded null` or `syntax error at or near "??"`:
+
+```bash
+# 1) Validate migration SQL encoding in the app container
+docker compose run --rm --no-deps api node prisma/validate-migrations.js
+```
+
+If this fails, convert migration SQL files to UTF-8 (without BOM), commit, and redeploy.
+
+If deploy now fails with Prisma `P3009` after a bad first attempt:
+
+```bash
+# 2) If this is a fresh DB, easiest recovery is reset volumes
+docker compose down -v
+docker compose up -d postgres redis
+docker compose run --rm --no-deps api npx prisma migrate deploy
+
+# 3) If this is NOT a fresh DB, do NOT drop volumes.
+#    Mark the failed migration as rolled back, then deploy again.
+docker compose run --rm --no-deps api npx prisma migrate resolve --rolled-back 0_init
+docker compose run --rm --no-deps api npx prisma migrate deploy
+```
+
+Important:
+- Use `--rolled-back` only after fixing the corrupted migration file in Git.
+- Never delete production data volumes unless the database is intentionally disposable.

@@ -6,6 +6,11 @@ echo "  LMS Marketplace — Container Starting"
 echo "  Mode: ${CONTAINER_MODE:-api}"
 echo "============================================"
 
+# Validate migration files before any DB operation
+echo "[Entrypoint] Validating migration SQL encoding..."
+node prisma/validate-migrations.js
+echo "[Entrypoint] Migration SQL encoding check passed."
+
 # Wait for PostgreSQL to be ready (extra safety beyond depends_on healthcheck)
 echo "[Entrypoint] Waiting for PostgreSQL..."
 until npx prisma db execute --stdin <<< "SELECT 1" > /dev/null 2>&1; do
