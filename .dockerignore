@@ -15,7 +15,6 @@ __tests__
 *.test.ts
 *.spec.ts
 jest.config.js
-tsconfig.json
 README.md
 backups
 *.sql.gz
