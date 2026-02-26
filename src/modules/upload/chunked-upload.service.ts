@@ -210,10 +210,17 @@ export class ChunkedUploadService {
         const fileBuffer = await fs.promises.readFile(finalPath);
         const fileId = uuidv4();
 
-        // Determine storage path based on security mode
+        const requiresNormalization = session.mimeType !== 'application/pdf';
+        const effectiveSecure = session.isSecure || requiresNormalization;
+
+        if (requiresNormalization && !session.isSecure) {
+            console.warn(`[ChunkedUpload] Forcing secure conversion for non-PDF file: ${session.filename} (${session.mimeType})`);
+        }
+
+        // Determine storage path based on effective security mode
         let storageKey: string;
 
-        if (session.isSecure) {
+        if (effectiveSecure) {
             // Create a pending PartFile record
             // eslint-disable-next-line @typescript-eslint/no-unused-vars
             const partFile = await prisma.partFile.create({
@@ -327,6 +334,7 @@ export class ChunkedUploadService {
             case 'application/vnd.ms-powerpoint': return '.ppt';
             case 'application/msword': return '.doc';
             case 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': return '.docx';
+            case 'text/plain': return '.txt';
             default: return '.bin';
         }
     }

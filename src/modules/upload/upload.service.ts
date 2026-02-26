@@ -119,7 +119,13 @@ export class UploadService {
         }
 
         // PHASE 10-C: Default to TRUE for security/conversion if not specified
-        const isSecure = isSecureStr === undefined ? true : String(isSecureStr) === 'true';
+        const requestedSecure = isSecureStr === undefined ? true : String(isSecureStr) === 'true';
+        const requiresNormalization = file.mimetype !== 'application/pdf';
+        const isSecure = requestedSecure || requiresNormalization;
+
+        if (requiresNormalization && !requestedSecure) {
+            console.warn(`[UploadService] Forcing secure conversion for non-PDF file: ${file.originalname} (${file.mimetype})`);
+        }
 
         // Polymorphic check: Part (New) or Lesson (Old)
         const part = await prisma.part.findUnique({
