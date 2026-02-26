@@ -143,7 +143,7 @@ These endpoints are for the **Admin Dashboard**.
 3. **Upload Lesson PDF**
     - **POST** `/lessons/:lessonId/pdf`
     - **Body**: `title` (text, optional).
-    - **Constraints**: PDF only, Max 25MB.
+    - **Constraints**: Document upload (PDF/PPT/PPTX/DOC/DOCX/TXT), Max 100MB.
 4. **Get Lesson PDF** (Secure Stream)
     - **GET** `/lessons/:lessonId/pdf`
     - **Returns**: Binary stream (application/pdf).

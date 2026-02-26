@@ -31,7 +31,7 @@ const uploadImage = multer({
 
 const uploadPdf = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: UPLOAD_LIMITS.PDF }, // POLICY: 25MB centralized
+    limits: { fileSize: UPLOAD_LIMITS.PDF }, // POLICY: 100MB centralized
     fileFilter: fileFilter([
         'application/pdf', 
         'application/vnd.openxmlformats-officedocument.presentationml.presentation', // pptx
