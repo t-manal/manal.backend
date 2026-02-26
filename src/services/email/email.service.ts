@@ -232,8 +232,6 @@ export class EmailService {
     }
 
     async sendVerificationCode(email: string, code: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
-        const appUrl = process.env.STUDENT_APP_URL || 'http://localhost:3000';
-        
         return this.sendEmail({
             to: email,
             subject: 'Email Verification Code',
@@ -244,11 +242,6 @@ export class EmailService {
                     <p>Thank you for registering. Please use the following code to verify your email address:</p>
                     <div style="font-size: 24px; font-weight: bold; background: #f3f4f6; padding: 10px; text-align: center; border-radius: 5px; margin: 20px 0;">
                         ${code}
-                    </div>
-                    <div style="text-align: center; margin-bottom: 20px;">
-                        <a href="${appUrl}/verify-email" style="background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
-                            Verify Email
-                        </a>
                     </div>
                     <p style="color: #666; font-size: 14px;">This code will expire in 10 minutes.</p>
                 </div>
