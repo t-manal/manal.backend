@@ -46,6 +46,11 @@ export async function performStartupChecks(): Promise<boolean> {
             if (!studentAppUrl || studentAppUrl.includes('localhost') || studentAppUrl.includes('127.0.0.1')) {
                 logger.warn('STUDENT_APP_URL is missing or points to localhost in production; reset/verification links may be invalid');
             }
+
+            const resetTtl = Number(process.env.PASSWORD_RESET_TOKEN_TTL_MINUTES || 30);
+            if (!Number.isFinite(resetTtl) || resetTtl < 5) {
+                logger.warn('PASSWORD_RESET_TOKEN_TTL_MINUTES is too low; recommended >= 10 minutes');
+            }
         }
 
         return true;

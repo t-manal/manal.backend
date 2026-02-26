@@ -334,7 +334,8 @@ export class AuthService {
         // Generate Token
         const token = crypto.randomBytes(32).toString('hex');
         const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-        const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+        const ttlMinutes = Math.max(5, Number(process.env.PASSWORD_RESET_TOKEN_TTL_MINUTES || 30));
+        const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000);
 
         // Store Hashed Token
         await prisma.passwordResetToken.create({
@@ -346,7 +347,8 @@ export class AuthService {
         });
 
         // Send Email
-        const resetLink = `${process.env.STUDENT_APP_URL || 'http://localhost:3000'}/ar/reset-password?token=${token}`;
+        const appUrl = (process.env.STUDENT_APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
+        const resetLink = `${appUrl}/ar/reset-password?token=${encodeURIComponent(token)}`;
         const emailResult = await emailService.sendPasswordResetEmail(user.email, resetLink);
         if (!emailResult.success) {
             const { logger } = await import('../../utils/logger');
@@ -354,11 +356,28 @@ export class AuthService {
                 userId: user.id,
                 error: emailResult.error
             });
+        } else {
+            const { logger } = await import('../../utils/logger');
+            logger.info('Password reset email sent successfully', {
+                userId: user.id,
+                expiresAt: expiresAt.toISOString(),
+                ttlMinutes
+            });
         }
     }
 
     async resetPassword(token: string, newPassword: string) {
-        const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+        // Normalize token to tolerate trailing punctuation/spaces from email clients.
+        const normalizedToken = token
+            .trim()
+            .replace(/^[^a-fA-F0-9]+|[^a-fA-F0-9]+$/g, '')
+            .toLowerCase();
+
+        if (!/^[a-f0-9]{64}$/.test(normalizedToken)) {
+            throw new AppError('Invalid or expired password reset token', 400);
+        }
+
+        const tokenHash = crypto.createHash('sha256').update(normalizedToken).digest('hex');
 
         // Find valid token
         const resetRecord = await prisma.passwordResetToken.findUnique({

@@ -260,7 +260,7 @@ export class EmailService {
         return this.sendEmail({
             to: email,
             subject: 'Reset Your Password',
-            text: `You requested a password reset. Click here to reset: ${resetLink}. This link expires in 10 minutes.`,
+            text: `You requested a password reset.\nReset link:\n<${resetLink}>\nThis link expires soon.`,
             html: `
                 <div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
                     <h2 style="color: #4f46e5;">Password Reset Request</h2>
