@@ -7,6 +7,7 @@ import prisma from '../../config/prisma';
 import { BunnyStorageProvider } from '../../services/storage/bunny-storage.provider';
 import { AppError } from '../../utils/app-error';
 import { UPLOAD_LIMITS } from '../../config/upload-limits.config';
+import { WATERMARK_QUEUE_LABEL } from '../../constants/watermark';
 
 const storage = new BunnyStorageProvider();
 const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
@@ -262,7 +263,7 @@ export class ChunkedUploadService {
                 sourceMime: session.mimeType,
                 originalName: session.filename,
                 partFileId: fileId,
-                adminName: 'Dr. Manal'
+                adminName: WATERMARK_QUEUE_LABEL
             });
             console.log(`[ChunkedUpload] Queued secure file ${fileId} for processing. jobId=${job.id} sourceKey=${sourceKey}`);
 

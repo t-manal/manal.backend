@@ -1,6 +1,7 @@
 import { UploadService } from '../upload.service';
 import { prismaMock } from '../../../__tests__/setup';
 import { BunnyStorageProvider } from '../../../services/storage/bunny-storage.provider';
+import { WATERMARK_QUEUE_LABEL } from '../../../constants/watermark';
 
 const mockQueueAdd = jest.fn();
 
@@ -82,7 +83,7 @@ describe('UploadService - Queue Payload Contract', () => {
         sourceMime: 'application/pdf',
         originalName: 'lecture-notes.pdf',
         partFileId: expect.any(String),
-        adminName: 'Dr. Manal',
+        adminName: WATERMARK_QUEUE_LABEL,
       })
     );
     expect(payload.filePath).toBeUndefined();

@@ -5,6 +5,7 @@ import { Queue } from 'bullmq';
 import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
+import { WATERMARK_QUEUE_LABEL } from '../src/constants/watermark';
 
 const prisma = new PrismaClient();
 const storage = new BunnyStorageProvider();
@@ -75,7 +76,7 @@ async function main() {
         await pdfQueue.add('watermark-pdf', {
             filePath: tempPath,
             partFileId: file.id,
-            adminName: 'Dr. Manal Reprocess'
+            adminName: WATERMARK_QUEUE_LABEL
         });
         
         console.log(`  Queued successfully.`);

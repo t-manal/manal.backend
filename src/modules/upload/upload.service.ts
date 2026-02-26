@@ -4,6 +4,7 @@ import { BunnyStreamService } from '../../services/video/bunny-stream.service';
 import { AppError } from '../../utils/app-error';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
+import { WATERMARK_QUEUE_LABEL } from '../../constants/watermark';
 
 
 const storage = new BunnyStorageProvider();
@@ -178,7 +179,7 @@ export class UploadService {
                     sourceMime: file.mimetype,
                     originalName: file.originalname,
                     partFileId: fileId,
-                    adminName: 'Dr. Manal' // Hardcoded Contract #9
+                    adminName: WATERMARK_QUEUE_LABEL
                 });
                 console.log(`[UploadService] Queued secure PDF job. partFileId=${fileId} jobId=${job.id} sourceKey=${sourceKey}`);
 

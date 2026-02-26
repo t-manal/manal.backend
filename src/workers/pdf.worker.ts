@@ -1,8 +1,9 @@
 import { Worker, Job } from 'bullmq';
-import { PDFDocument, rgb, degrees } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb, degrees } from 'pdf-lib';
 import path from 'path';
 import { PrismaClient } from '@prisma/client';
 import { BunnyStorageProvider as StorageService } from '../services/storage/bunny-storage.provider';
+import { WATERMARK_BRAND, WATERMARK_PHONE } from '../constants/watermark';
 import libre from 'libreoffice-convert';
 import util from 'util';
 import IORedis from 'ioredis';
@@ -17,7 +18,7 @@ interface PdfJobData {
   sourceMime: string;
   originalName: string;
   partFileId: string;
-  adminName: string;
+  adminName?: string;
 }
 
 function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
@@ -52,6 +53,10 @@ function logWorkerError(category: string, jobId: string, partFileId: string, sou
   console.error(`[PDF Worker][${category}] jobId=${jobId} partFileId=${partFileId} sourceKey=${sourceKey} error=${message}`);
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
 // Support Railway REDIS_URL with TLS (rediss://)
 const connection = process.env.REDIS_URL
   ? new IORedis(process.env.REDIS_URL, {
@@ -67,7 +72,7 @@ const connection = process.env.REDIS_URL
 export const pdfWorker = new Worker<PdfJobData>(
   'pdf-processing',
   async (job: Job<PdfJobData>) => {
-    const { sourceKey, sourceMime, originalName, partFileId, adminName } = job.data;
+    const { sourceKey, sourceMime, originalName, partFileId } = job.data;
     const jobId = String(job.id ?? 'unknown');
     console.log(`[PDF Worker] Processing job ${jobId} for PartFile ${partFileId} sourceKey=${sourceKey}`);
     
@@ -129,18 +134,54 @@ export const pdfWorker = new Worker<PdfJobData>(
 
       // 5. Watermark Pages
       const pages = pdfDoc.getPages();
-      const watermarkText = adminName || 'Dr. Manal';
-      console.log(`[PDF Worker] Step 5: Applying Watermark '${watermarkText}' to ${pages.length} pages...`);
+      const brandFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+      const phoneFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      console.log(`[PDF Worker] Step 5: Applying Watermark '${WATERMARK_BRAND} / ${WATERMARK_PHONE}' to ${pages.length} pages...`);
 
       pages.forEach((page) => {
         const { width, height } = page.getSize();
-        page.drawText(watermarkText, {
-          x: width / 2 - 100, // Approximate centering
-          y: height / 2,
-          size: 50,
-          color: rgb(0.8, 0.8, 0.8), // Light gray
-          opacity: 0.3,
-          rotate: degrees(45),
+
+        const minSide = Math.min(width, height);
+        const brandSize = clamp(minSide * 0.052, 18, 44);
+        const phoneSize = clamp(minSide * 0.032, 12, 24);
+        const footerSize = clamp(minSide * 0.018, 8, 12);
+
+        const brandWidth = brandFont.widthOfTextAtSize(WATERMARK_BRAND, brandSize);
+        const phoneWidth = phoneFont.widthOfTextAtSize(WATERMARK_PHONE, phoneSize);
+        const footerText = `${WATERMARK_BRAND} | ${WATERMARK_PHONE}`;
+        const footerWidth = phoneFont.widthOfTextAtSize(footerText, footerSize);
+
+        const centerX = width / 2;
+        const centerY = height / 2;
+        const rotation = degrees(34);
+
+        page.drawText(WATERMARK_BRAND, {
+          x: centerX - brandWidth / 2,
+          y: centerY + brandSize * 0.45,
+          size: brandSize,
+          font: brandFont,
+          color: rgb(0.44, 0.44, 0.44),
+          opacity: 0.18,
+          rotate: rotation,
+        });
+
+        page.drawText(WATERMARK_PHONE, {
+          x: centerX - phoneWidth / 2,
+          y: centerY - phoneSize * 1.25,
+          size: phoneSize,
+          font: phoneFont,
+          color: rgb(0.4, 0.4, 0.4),
+          opacity: 0.22,
+          rotate: rotation,
+        });
+
+        page.drawText(footerText, {
+          x: width - footerWidth - 24,
+          y: 16,
+          size: footerSize,
+          font: phoneFont,
+          color: rgb(0.42, 0.42, 0.42),
+          opacity: 0.22,
         });
       });
 
