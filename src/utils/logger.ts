@@ -4,7 +4,7 @@
  * 
  * Features:
  * - Structured JSON output
- * - Log levels: info, warn, error
+ * - Log levels: debug, info, warn, error
  * - Automatic sanitization of sensitive data
  * - Request ID correlation support
  */
@@ -24,7 +24,7 @@ const SENSITIVE_KEYS = [
     'x-auth-token',
 ];
 
-type LogLevel = 'info' | 'warn' | 'error';
+type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 interface LogContext {
     requestId?: string;
@@ -129,6 +129,10 @@ class Logger {
 
     info(message: string, context?: LogContext): void {
         this.log('info', message, context);
+    }
+
+    debug(message: string, context?: LogContext): void {
+        this.log('debug', message, context);
     }
 
     warn(message: string, context?: LogContext): void {
