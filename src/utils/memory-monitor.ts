@@ -3,23 +3,25 @@ import { logger } from './logger';
 // Monitor memory usage and trigger GC if needed
 export function startMemoryMonitor() {
     const CHECK_INTERVAL = 30000; // 30 seconds
-    const CRITICAL_THRESHOLD = 0.9; // 90% heap usage
+    const CRITICAL_THRESHOLD = 0.95; // 95% heap usage
+    const RSS_LIMIT_MB = 400;
 
     setInterval(() => {
         const usage = process.memoryUsage();
         const heapUsedPercent = usage.heapUsed / usage.heapTotal;
+        const rssUsageMB = usage.rss / 1024 / 1024;
         const rssMB = (usage.rss / 1024 / 1024).toFixed(2);
         const heapUsedMB = (usage.heapUsed / 1024 / 1024).toFixed(2);
         const heapTotalMB = (usage.heapTotal / 1024 / 1024).toFixed(2);
 
-        logger.info('Memory Stats', {
+        logger.debug('Memory Stats', {
             rss: `${rssMB} MB`,
             heapUsed: `${heapUsedMB} MB`,
             heapTotal: `${heapTotalMB} MB`,
             percentage: `${(heapUsedPercent * 100).toFixed(1)}%`
         });
 
-        if (heapUsedPercent > CRITICAL_THRESHOLD) {
+        if (heapUsedPercent > CRITICAL_THRESHOLD && rssUsageMB > RSS_LIMIT_MB) {
             logger.warn('⚠️ CRITICAL MEMORY USAGE DETECTED');
             
             // If running with --expose-gc, manually trigger garbage collection
