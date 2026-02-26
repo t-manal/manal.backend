@@ -167,6 +167,7 @@ export class AuthService {
                 firstName: user.firstName,
                 lastName: user.lastName,
                 phoneNumber: user.phoneNumber,
+                bio: user.bio,
             }
         };
     }
@@ -239,6 +240,7 @@ export class AuthService {
                 firstName: true,
                 lastName: true,
                 phoneNumber: true,
+                bio: true,
             },
         });
 
@@ -249,13 +251,14 @@ export class AuthService {
         return user;
     }
 
-    async updateProfile(userId: string, data: { firstName: string; lastName: string; phoneNumber?: string }) {
+    async updateProfile(userId: string, data: { firstName: string; lastName: string; phoneNumber?: string; bio?: string | null }) {
         return prisma.user.update({
             where: { id: userId },
             data: {
                 firstName: data.firstName,
                 lastName: data.lastName,
                 phoneNumber: data.phoneNumber,
+                bio: data.bio,
             },
             select: {
                 id: true,
@@ -265,6 +268,7 @@ export class AuthService {
                 firstName: true,
                 lastName: true,
                 phoneNumber: true,
+                bio: true,
             }
         });
     }
