@@ -179,7 +179,11 @@ export class AuthController {
     async forgotPassword(req: Request, res: Response, next: NextFunction) {
         try {
             const { email } = forgotPasswordSchema.parse(req.body);
-            await authService.requestPasswordReset(email);
+            const forwardedProto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0]?.trim();
+            const proto = forwardedProto || req.protocol || 'https';
+            const host = req.get('host');
+            const apiBaseUrl = host ? `${proto}://${host}/api/v1` : undefined;
+            await authService.requestPasswordReset(email, { apiBaseUrl });
             return ApiResponse.success(res, null, 'If an account exists for this email, we have sent a reset link.');
         } catch (error) {
             next(error);

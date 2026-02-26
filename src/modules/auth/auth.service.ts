@@ -6,6 +6,7 @@ import { JwtUtils, TokenPayload } from '../../utils/jwt';
 import { RegisterInput, LoginInput } from './auth.schema';
 import { Role } from '@prisma/client';
 import { emailService } from '../../services/email/email.service';
+import { logger } from '../../utils/logger';
 
 export class AuthService {
     private normalizePasswordResetToken(rawToken: string): string | null {
@@ -341,7 +342,7 @@ export class AuthService {
         return { accessToken, refreshToken };
     }
 
-    async requestPasswordReset(email: string) {
+    async requestPasswordReset(email: string, options?: { apiBaseUrl?: string }) {
         const user = await prisma.user.findUnique({ where: { email } });
 
         // Anti-Enumeration: Return success even if user not found (but don't send email)
@@ -365,9 +366,21 @@ export class AuthService {
             },
         });
 
+        logger.info('Password reset token issued', {
+            userId: user.id,
+            email: user.email.replace(/(.{2})(.*)(@.*)/, '$1***$3'),
+            tokenHashPrefix: tokenHash.slice(0, 12),
+            issuedAt: new Date().toISOString(),
+            expiresAt: expiresAt.toISOString(),
+            ttlMinutes
+        });
+
         // Send Email
         const appUrl = (process.env.STUDENT_APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
-        const resetLink = `${appUrl}/ar/reset-password?token=${encodeURIComponent(token)}`;
+        const apiBaseUrlFromEnv = (process.env.PUBLIC_API_BASE_URL || '').replace(/\/+$/, '');
+        const apiBaseUrl = (options?.apiBaseUrl || apiBaseUrlFromEnv).replace(/\/+$/, '');
+        const apiQuery = apiBaseUrl ? `&api=${encodeURIComponent(apiBaseUrl)}` : '';
+        const resetLink = `${appUrl}/ar/reset-password?token=${encodeURIComponent(token)}${apiQuery}`;
         const emailResult = await emailService.sendPasswordResetEmail(user.email, resetLink);
         if (!emailResult.success) {
             const { logger } = await import('../../utils/logger');
@@ -389,22 +402,50 @@ export class AuthService {
         // Normalize token to tolerate URL encoding and punctuation added by email clients.
         const normalizedToken = this.normalizePasswordResetToken(token);
         if (!normalizedToken) {
+            logger.warn('Reset password rejected: token normalization failed', {
+                rawTokenLength: token?.length ?? 0,
+            });
             throw new AppError('Invalid or expired password reset token', 400);
         }
 
         const tokenHash = crypto.createHash('sha256').update(normalizedToken).digest('hex');
+        logger.info('Reset password attempt', {
+            tokenHashPrefix: tokenHash.slice(0, 12),
+            normalizedLength: normalizedToken.length,
+        });
 
-        // Find valid token
-        const resetRecord = await prisma.passwordResetToken.findFirst({
-            where: {
-                tokenHash,
-                usedAt: null,
-                expiresAt: { gt: new Date() },
-            },
+        // Find token and diagnose failure reason explicitly in logs.
+        const resetRecord = await prisma.passwordResetToken.findUnique({
+            where: { tokenHash },
             include: { user: true },
         });
 
         if (!resetRecord) {
+            logger.warn('Reset password rejected: token hash not found', {
+                tokenHashPrefix: tokenHash.slice(0, 12),
+            });
+            throw new AppError('Invalid or expired password reset token', 400);
+        }
+
+        const now = new Date();
+        if (resetRecord.usedAt) {
+            logger.warn('Reset password rejected: token already used', {
+                userId: resetRecord.userId,
+                tokenHashPrefix: tokenHash.slice(0, 12),
+                usedAt: resetRecord.usedAt.toISOString(),
+                expiresAt: resetRecord.expiresAt.toISOString(),
+                now: now.toISOString(),
+            });
+            throw new AppError('Invalid or expired password reset token', 400);
+        }
+
+        if (resetRecord.expiresAt <= now) {
+            logger.warn('Reset password rejected: token expired', {
+                userId: resetRecord.userId,
+                tokenHashPrefix: tokenHash.slice(0, 12),
+                expiresAt: resetRecord.expiresAt.toISOString(),
+                now: now.toISOString(),
+            });
             throw new AppError('Invalid or expired password reset token', 400);
         }
 
