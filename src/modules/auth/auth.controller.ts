@@ -25,6 +25,32 @@ const REFRESH_COOKIE_OPTIONS = {
 };
 
 export class AuthController {
+    private getAllowedOrigins(): string[] {
+        const defaults = [
+            'http://localhost:3000',
+            'http://localhost:3001',
+            'https://student-frontend-bice.vercel.app',
+            'https://admin-lms-pi.vercel.app',
+            'https://www.manalalhihi.com',
+            'https://admin.manalalhihi.com',
+        ];
+
+        const rawOrigins = process.env.CORS_ORIGIN?.split(',') || defaults;
+        return rawOrigins.map(origin => origin.trim().replace(/\/+$/, ''));
+    }
+
+    private extractLocaleFromReferer(referer?: string): 'ar' | 'en' {
+        if (!referer) return 'ar';
+
+        try {
+            const parsed = new URL(referer);
+            const match = parsed.pathname.match(/^\/(ar|en)(\/|$)/);
+            return match?.[1] === 'en' ? 'en' : 'ar';
+        } catch {
+            return 'ar';
+        }
+    }
+
     async register(req: Request, res: Response, next: NextFunction) {
         try {
             // SECURITY: Explicit check to prevent privilege escalation
@@ -183,7 +209,24 @@ export class AuthController {
             const proto = forwardedProto || req.protocol || 'https';
             const host = req.get('host');
             const apiBaseUrl = host ? `${proto}://${host}/api/v1` : undefined;
-            await authService.requestPasswordReset(email, { apiBaseUrl });
+            const requestOrigin = (req.headers.origin as string | undefined)?.trim();
+            const allowedOrigins = this.getAllowedOrigins();
+
+            let appBaseUrl: string | undefined;
+            if (requestOrigin) {
+                try {
+                    const parsedOrigin = new URL(requestOrigin);
+                    const normalizedOrigin = `${parsedOrigin.protocol}//${parsedOrigin.host}`.replace(/\/+$/, '');
+                    if (allowedOrigins.includes(normalizedOrigin)) {
+                        appBaseUrl = normalizedOrigin;
+                    }
+                } catch {
+                    // Ignore malformed origins and fall back to env STUDENT_APP_URL.
+                }
+            }
+
+            const locale = this.extractLocaleFromReferer(req.get('referer') || undefined);
+            await authService.requestPasswordReset(email, { apiBaseUrl, appBaseUrl, locale });
             return ApiResponse.success(res, null, 'If an account exists for this email, we have sent a reset link.');
         } catch (error) {
             next(error);

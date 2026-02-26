@@ -342,7 +342,10 @@ export class AuthService {
         return { accessToken, refreshToken };
     }
 
-    async requestPasswordReset(email: string, options?: { apiBaseUrl?: string }) {
+    async requestPasswordReset(
+        email: string,
+        options?: { apiBaseUrl?: string; appBaseUrl?: string; locale?: 'ar' | 'en' }
+    ) {
         const user = await prisma.user.findUnique({ where: { email } });
 
         // Anti-Enumeration: Return success even if user not found (but don't send email)
@@ -376,11 +379,19 @@ export class AuthService {
         });
 
         // Send Email
-        const appUrl = (process.env.STUDENT_APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
+        const defaultAppUrl = (process.env.STUDENT_APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
+        const appUrl = (options?.appBaseUrl || defaultAppUrl).replace(/\/+$/, '');
+        const locale = options?.locale === 'en' ? 'en' : 'ar';
         const apiBaseUrlFromEnv = (process.env.PUBLIC_API_BASE_URL || '').replace(/\/+$/, '');
         const apiBaseUrl = (options?.apiBaseUrl || apiBaseUrlFromEnv).replace(/\/+$/, '');
         const apiQuery = apiBaseUrl ? `&api=${encodeURIComponent(apiBaseUrl)}` : '';
-        const resetLink = `${appUrl}/ar/reset-password?token=${encodeURIComponent(token)}${apiQuery}`;
+        const resetLink = `${appUrl}/${locale}/reset-password?token=${encodeURIComponent(token)}${apiQuery}`;
+        logger.info('Password reset link target resolved', {
+            userId: user.id,
+            appUrl,
+            apiBaseUrl,
+            locale,
+        });
         const emailResult = await emailService.sendPasswordResetEmail(user.email, resetLink);
         if (!emailResult.success) {
             const { logger } = await import('../../utils/logger');
