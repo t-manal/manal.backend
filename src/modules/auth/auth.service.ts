@@ -8,6 +8,20 @@ import { Role } from '@prisma/client';
 import { emailService } from '../../services/email/email.service';
 
 export class AuthService {
+    private normalizePasswordResetToken(rawToken: string): string | null {
+        if (!rawToken) return null;
+
+        let decoded = rawToken;
+        try {
+            decoded = decodeURIComponent(rawToken);
+        } catch {
+            // Keep raw token when decoding fails.
+        }
+
+        const extracted = decoded.match(/[a-fA-F0-9]{64}/)?.[0];
+        return extracted ? extracted.toLowerCase() : null;
+    }
+
     async register(input: RegisterInput, ipAddress?: string, userAgent?: string) {
         const existingUser = await prisma.user.findFirst({
             where: { email: input.email },
@@ -338,7 +352,8 @@ export class AuthService {
         // Generate Token
         const token = crypto.randomBytes(32).toString('hex');
         const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-        const ttlMinutes = Math.max(5, Number(process.env.PASSWORD_RESET_TOKEN_TTL_MINUTES || 30));
+        const ttlEnv = Number(process.env.PASSWORD_RESET_TOKEN_TTL_MINUTES);
+        const ttlMinutes = Number.isFinite(ttlEnv) ? Math.max(5, ttlEnv) : 30;
         const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000);
 
         // Store Hashed Token
@@ -371,29 +386,25 @@ export class AuthService {
     }
 
     async resetPassword(token: string, newPassword: string) {
-        // Normalize token to tolerate trailing punctuation/spaces from email clients.
-        const normalizedToken = token
-            .trim()
-            .replace(/^[^a-fA-F0-9]+|[^a-fA-F0-9]+$/g, '')
-            .toLowerCase();
-
-        if (!/^[a-f0-9]{64}$/.test(normalizedToken)) {
+        // Normalize token to tolerate URL encoding and punctuation added by email clients.
+        const normalizedToken = this.normalizePasswordResetToken(token);
+        if (!normalizedToken) {
             throw new AppError('Invalid or expired password reset token', 400);
         }
 
         const tokenHash = crypto.createHash('sha256').update(normalizedToken).digest('hex');
 
         // Find valid token
-        const resetRecord = await prisma.passwordResetToken.findUnique({
-            where: { tokenHash },
+        const resetRecord = await prisma.passwordResetToken.findFirst({
+            where: {
+                tokenHash,
+                usedAt: null,
+                expiresAt: { gt: new Date() },
+            },
             include: { user: true },
         });
 
         if (!resetRecord) {
-            throw new AppError('Invalid or expired password reset token', 400);
-        }
-
-        if (resetRecord.usedAt || resetRecord.expiresAt < new Date()) {
             throw new AppError('Invalid or expired password reset token', 400);
         }
 
