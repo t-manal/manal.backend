@@ -24,32 +24,33 @@ const REFRESH_COOKIE_OPTIONS = {
     maxAge: 7 * 24 * 60 * 60 * 1000,
 };
 
+const getAllowedOrigins = (): string[] => {
+    const defaults = [
+        'http://localhost:3000',
+        'http://localhost:3001',
+        'https://student-frontend-bice.vercel.app',
+        'https://admin-lms-pi.vercel.app',
+        'https://www.manalalhihi.com',
+        'https://admin.manalalhihi.com',
+    ];
+
+    const rawOrigins = process.env.CORS_ORIGIN?.split(',') || defaults;
+    return rawOrigins.map(origin => origin.trim().replace(/\/+$/, ''));
+};
+
+const extractLocaleFromReferer = (referer?: string): 'ar' | 'en' => {
+    if (!referer) return 'ar';
+
+    try {
+        const parsed = new URL(referer);
+        const match = parsed.pathname.match(/^\/(ar|en)(\/|$)/);
+        return match?.[1] === 'en' ? 'en' : 'ar';
+    } catch {
+        return 'ar';
+    }
+};
+
 export class AuthController {
-    private getAllowedOrigins(): string[] {
-        const defaults = [
-            'http://localhost:3000',
-            'http://localhost:3001',
-            'https://student-frontend-bice.vercel.app',
-            'https://admin-lms-pi.vercel.app',
-            'https://www.manalalhihi.com',
-            'https://admin.manalalhihi.com',
-        ];
-
-        const rawOrigins = process.env.CORS_ORIGIN?.split(',') || defaults;
-        return rawOrigins.map(origin => origin.trim().replace(/\/+$/, ''));
-    }
-
-    private extractLocaleFromReferer(referer?: string): 'ar' | 'en' {
-        if (!referer) return 'ar';
-
-        try {
-            const parsed = new URL(referer);
-            const match = parsed.pathname.match(/^\/(ar|en)(\/|$)/);
-            return match?.[1] === 'en' ? 'en' : 'ar';
-        } catch {
-            return 'ar';
-        }
-    }
 
     async register(req: Request, res: Response, next: NextFunction) {
         try {
@@ -210,7 +211,7 @@ export class AuthController {
             const host = req.get('host');
             const apiBaseUrl = host ? `${proto}://${host}/api/v1` : undefined;
             const requestOrigin = (req.headers.origin as string | undefined)?.trim();
-            const allowedOrigins = this.getAllowedOrigins();
+            const allowedOrigins = getAllowedOrigins();
 
             let appBaseUrl: string | undefined;
             if (requestOrigin) {
@@ -225,7 +226,7 @@ export class AuthController {
                 }
             }
 
-            const locale = this.extractLocaleFromReferer(req.get('referer') || undefined);
+            const locale = extractLocaleFromReferer(req.get('referer') || undefined);
             await authService.requestPasswordReset(email, { apiBaseUrl, appBaseUrl, locale });
             return ApiResponse.success(res, null, 'If an account exists for this email, we have sent a reset link.');
         } catch (error) {
