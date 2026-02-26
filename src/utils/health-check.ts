@@ -29,6 +29,25 @@ export async function performStartupChecks(): Promise<boolean> {
         }
         logger.info('✅ Environment variables validated');
 
+        // 4. Email delivery configuration checks (non-fatal except in production with no channel)
+        const hasBrevoApi = Boolean(process.env.BREVO_API_KEY?.trim());
+        const hasSmtp = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+
+        if (process.env.NODE_ENV === 'production' && !hasBrevoApi && !hasSmtp) {
+            throw new Error('No email delivery channel configured (BREVO_API_KEY or SMTP credentials required)');
+        }
+
+        if (process.env.NODE_ENV === 'production' && !hasBrevoApi && hasSmtp) {
+            logger.warn('BREVO_API_KEY is missing in production; SMTP fallback will be used for email delivery');
+        }
+
+        if (process.env.NODE_ENV === 'production') {
+            const studentAppUrl = process.env.STUDENT_APP_URL || '';
+            if (!studentAppUrl || studentAppUrl.includes('localhost') || studentAppUrl.includes('127.0.0.1')) {
+                logger.warn('STUDENT_APP_URL is missing or points to localhost in production; reset/verification links may be invalid');
+            }
+        }
+
         return true;
     } catch (error) {
         logger.error('❌ Startup Check Failed:', {}, error as Error);

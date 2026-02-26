@@ -347,7 +347,14 @@ export class AuthService {
 
         // Send Email
         const resetLink = `${process.env.STUDENT_APP_URL || 'http://localhost:3000'}/ar/reset-password?token=${token}`;
-        await emailService.sendPasswordResetEmail(user.email, resetLink);
+        const emailResult = await emailService.sendPasswordResetEmail(user.email, resetLink);
+        if (!emailResult.success) {
+            const { logger } = await import('../../utils/logger');
+            logger.error('Failed to send password reset email via EmailService', {
+                userId: user.id,
+                error: emailResult.error
+            });
+        }
     }
 
     async resetPassword(token: string, newPassword: string) {

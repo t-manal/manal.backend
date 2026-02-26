@@ -41,10 +41,22 @@ export class EmailService {
             logger: !this.isProduction
         });
 
-        // Verify connection on startup (non-blocking) - Skip in production (API First)
-        if (!this.isProduction) {
+        // Verify connection when SMTP can be used as primary or fallback.
+        if (!this.isProduction || !this.hasBrevoApiKey()) {
             this.verifyConnection();
         }
+
+        if (this.isProduction && !this.hasBrevoApiKey() && this.hasSmtpConfig()) {
+            logger.warn('BREVO_API_KEY missing in production. Falling back to SMTP for email delivery.');
+        }
+    }
+
+    private hasBrevoApiKey(): boolean {
+        return Boolean(process.env.BREVO_API_KEY?.trim());
+    }
+
+    private hasSmtpConfig(): boolean {
+        return Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
     }
 
     private async verifyConnection() {
@@ -144,16 +156,11 @@ export class EmailService {
         }
     }
 
-    /**
-     * Generic send method that creates the correct context for sending
-     */
-    async sendEmail(options: EmailOptions): Promise<{ success: boolean; messageId?: string; error?: string }> {
-        // PRODUCTION: Direct to HTTP API (API-First)
-        if (this.isProduction) {
-            return this.sendViaBrevoFallback(options.to, options.subject, options.html, options.replyTo);
+    private async sendViaSmtp(options: EmailOptions): Promise<{ success: boolean; messageId?: string; error?: string }> {
+        if (!this.hasSmtpConfig()) {
+            return { success: false, error: 'SMTP is not configured' };
         }
 
-        // DEVELOPMENT: Try SMTP -> Fallback to HTTP
         const mailOptions = {
             from: process.env.SMTP_FROM || '"LMS Support" <support@lms.com>',
             to: options.to,
@@ -164,7 +171,6 @@ export class EmailService {
         };
 
         try {
-            // Attempt 1: SMTP
             const info = await this.transporter.sendMail(mailOptions);
             logger.info('Email sent via SMTP', { email: options.to, messageId: info.messageId });
             return { success: true, messageId: info.messageId };
@@ -174,10 +180,54 @@ export class EmailService {
                 command: error.command,
                 message: error.message
             };
-            logger.warn('SMTP Delivery Failed - Switching to HTTP Fallback', { email: options.to, error: safeError });
-            
-            // Attempt 2: HTTP Fallback
-            return this.sendViaBrevoFallback(options.to, options.subject, options.html, options.replyTo);
+            logger.warn('SMTP delivery failed', { email: options.to, error: safeError });
+            return { success: false, error: 'SMTP delivery failed' };
+        }
+    }
+
+    /**
+     * Generic send method with resilient multi-channel strategy.
+     * - Production: Brevo API first, then SMTP fallback
+     * - Non-production: SMTP first, then Brevo API fallback
+     */
+    async sendEmail(options: EmailOptions): Promise<{ success: boolean; messageId?: string; error?: string }> {
+        const channels: Array<'brevo' | 'smtp'> = [];
+        const hasBrevo = this.hasBrevoApiKey();
+        const hasSmtp = this.hasSmtpConfig();
+
+        if (this.isProduction) {
+            if (hasBrevo) channels.push('brevo');
+            if (hasSmtp) channels.push('smtp');
+        } else {
+            if (hasSmtp) channels.push('smtp');
+            if (hasBrevo) channels.push('brevo');
+        }
+
+        if (channels.length === 0) {
+            logger.error('Email delivery failed: No email channel configured', {
+                email: options.to,
+                isProduction: this.isProduction
+            });
+            return { success: false, error: 'Email delivery failed (No channel configured)' };
+        }
+
+        let lastError: string | undefined;
+
+        for (const channel of channels) {
+            const result = channel === 'brevo'
+                ? await this.sendViaBrevoFallback(options.to, options.subject, options.html, options.replyTo)
+                : await this.sendViaSmtp(options);
+
+            if (result.success) {
+                return result;
+            }
+
+            lastError = result.error;
+        }
+
+        return {
+            success: false,
+            error: lastError || 'Email delivery failed (All channels)'
         }
     }
 
