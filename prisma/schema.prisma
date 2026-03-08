@@ -230,6 +230,7 @@ model Lecture {
 
   course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
   parts  Part[]
+  files  LectureFile[]
 
   @@unique([courseId, order])
   @@index([courseId])
@@ -242,6 +243,9 @@ model Part {
   title     String
   order     Int
 
+  parentPartId   String?
+  parent         Part?                @relation("SubParts", fields: [parentPartId], references: [id])
+  subParts       Part[]               @relation("SubParts")
   lecture        Lecture              @relation(fields: [lectureId], references: [id], onDelete: Cascade)
   lessons        PartLesson[]
   files          PartFile[]
@@ -353,4 +357,22 @@ model RefreshToken {
   @@index([userId])
   @@index([token])
   @@map("refresh_tokens")
+}
+
+model LectureFile {
+  id           String           @id @default(uuid())
+  lectureId    String
+  title        String
+  displayName  String           @default("")
+  type         PartFileType     @default(PDF)
+  storageKey   String
+  order        Int
+  pageCount    Int              @default(0)
+  isSecure     Boolean          @default(true)
+  renderStatus FileRenderStatus @default(PENDING)
+
+  lecture Lecture @relation(fields: [lectureId], references: [id], onDelete: Cascade)
+
+  @@index([lectureId])
+  @@map("lecture_files")
 }

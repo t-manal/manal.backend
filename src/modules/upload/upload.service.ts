@@ -6,6 +6,15 @@ import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import { WATERMARK_QUEUE_LABEL } from '../../constants/watermark';
 
+/** Multer sends originalname in latin1 – re-decode as UTF-8 */
+const decodeFilename = (name: string): string => {
+    try {
+        return Buffer.from(name, 'latin1').toString('utf8');
+    } catch {
+        return name;
+    }
+};
+
 
 const storage = new BunnyStorageProvider();
 const streamService = new BunnyStreamService();
@@ -43,6 +52,17 @@ export class UploadService {
             case 'application/msword': return '.doc';
             case 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': return '.docx';
             case 'text/plain': return '.txt';
+            case 'image/jpeg':
+            case 'image/jpg': return '.jpg';
+            case 'image/png': return '.png';
+            case 'image/webp': return '.webp';
+            case 'text/x-c': return '.c';
+            case 'text/x-c++': return '.cpp';
+            case 'text/x-java-source': return '.java';
+            case 'application/javascript': return '.js';
+            case 'text/x-python': return '.py';
+            case 'text/html': return '.html';
+            case 'application/octet-stream': return '.txt';
             default: throw new AppError('Unsupported file type', 400);
         }
     }
@@ -112,17 +132,30 @@ export class UploadService {
             'application/vnd.ms-powerpoint',
             'application/msword',
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'text/plain'
+            'text/plain',
+            'image/jpeg',
+            'image/jpg',
+            'image/png',
+            'image/webp',
+            'text/x-c',
+            'text/x-c++',
+            'text/x-java-source',
+            'application/javascript',
+            'text/x-python',
+            'text/html',
+            'application/octet-stream'
         ];
         
         if (!allowedMimes.includes(file.mimetype)) {
-            throw new AppError('Unsupported file type. Allowed: PDF, PPTX, DOCX, TXT', 400);
+            throw new AppError('Unsupported file type. Allowed: PDF, PPTX, DOCX, TXT, Images', 400);
         }
 
         // PHASE 10-C: Default to TRUE for security/conversion if not specified
         const requestedSecure = isSecureStr === undefined ? true : String(isSecureStr) === 'true';
-        const requiresNormalization = file.mimetype !== 'application/pdf';
-        const isSecure = requestedSecure || requiresNormalization;
+        const isImageFile = file.mimetype.startsWith('image/');
+        const requiresNormalization = !isImageFile && file.mimetype !== 'application/pdf';
+        // Images bypass the secure watermark pipeline (direct upload only)
+        const isSecure = isImageFile ? false : (requestedSecure || requiresNormalization);
 
         if (requiresNormalization && !requestedSecure) {
             console.warn(`[UploadService] Forcing secure conversion for non-PDF file: ${file.originalname} (${file.mimetype})`);
@@ -154,7 +187,8 @@ export class UploadService {
                 console.log(`[UploadService] Staged secure source file. partFileId=${fileId} sourceKey=${sourceKey}`);
 
                 // Phase 10-IMPROVEMENT: Custom Display Name
-                const originalNameBase = path.parse(file.originalname).name;
+                const decodedName = decodeFilename(file.originalname);
+                const originalNameBase = path.parse(decodedName).name;
                 const displayName = `${originalNameBase}.pdf`;
 
                 // Create DB Record (PENDING)
@@ -162,7 +196,7 @@ export class UploadService {
                     data: {
                         id: fileId,
                         partId: lessonId,
-                        title: title || file.originalname,
+                        title: title || decodeFilename(file.originalname),
                         displayName: displayName, // Persist custom display name
                         type: 'PDF',
                         storageKey: '', // Will be updated by Worker
@@ -177,7 +211,7 @@ export class UploadService {
                 const job = await pdfQueue.add('watermark-pdf', {
                     sourceKey,
                     sourceMime: file.mimetype,
-                    originalName: file.originalname,
+                    originalName: decodeFilename(file.originalname),
                     partFileId: fileId,
                     adminName: WATERMARK_QUEUE_LABEL
                 });
@@ -190,7 +224,8 @@ export class UploadService {
             else {
                 console.log(`[UploadService] Direct Upload for ${file.originalname} (Downloadable).`);
                 
-                const key = `/public/${lessonId}/${fileId}/${file.originalname}`; // Public path
+                const decodedKey = decodeFilename(file.originalname).replace(/[#?&=+%]/g, '_');
+                const key = `/public/${lessonId}/${fileId}/${decodedKey}`; // Public path
                 await storage.uploadPublic(file, key);
 
                 // Create DB Record (COMPLETED)
@@ -198,7 +233,7 @@ export class UploadService {
                     data: {
                         id: fileId,
                         partId: lessonId,
-                        title: title || file.originalname,
+                        title: title || decodeFilename(file.originalname),
                         type: 'PDF',
                         storageKey: key, // Direct link
                         order,

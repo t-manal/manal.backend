@@ -40,7 +40,10 @@ export class UploadController {
         try {
             if (!req.file) throw new AppError('No file uploaded', 400);
             const { lessonId } = req.params;
-            const { title, isSecure } = req.body;
+            const { title: bodyTitle, isSecure: bodyIsSecure } = req.body;
+            const { title: queryTitle, isSecure: queryIsSecure } = req.query;
+            const title = (queryTitle as string) || bodyTitle;
+            const isSecure = (queryIsSecure as string) || bodyIsSecure;
             const result = await service.uploadLessonPdf(req.user!.userId, lessonId, req.file, title, isSecure);
             return ApiResponse.success(res, result, 'PDF uploaded');
         } catch (error) {
@@ -106,6 +109,18 @@ export class UploadController {
             if (!req.file) throw new AppError('No file uploaded', 400);
             const result = await service.uploadFile(req.user!.userId, req.file);
             return ApiResponse.success(res, result, 'File uploaded');
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    async uploadLessonImage(req: Request, res: Response, next: NextFunction) {
+        try {
+            if (!req.file) throw new AppError('No file uploaded', 400);
+            const { lessonId } = req.params;
+            const title = req.query.title ? decodeURIComponent(req.query.title as string) : req.file.originalname;
+            const result = await service.uploadLessonPdf(req.user!.userId, lessonId, req.file, title, false);
+            return ApiResponse.success(res, result, 'Image uploaded');
         } catch (error) {
             next(error);
         }

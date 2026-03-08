@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
+import path from 'path';
 import { UploadController } from './upload.controller';
 import { ChunkedUploadController } from './chunked-upload.controller';
 import { authMiddleware } from '../../middlewares/auth.middleware';
@@ -16,10 +17,27 @@ const controller = new UploadController();
 const chunkedController = new ChunkedUploadController();
 
 const fileFilter = (allowedMimes: string[]) => (req: any, file: Express.Multer.File, cb: any) => {
-    if (allowedMimes.includes(file.mimetype)) {
+    let effectiveMime = file.mimetype;
+
+    if (!effectiveMime || effectiveMime === 'application/octet-stream') {
+        const ext = path.extname(file.originalname || '').toLowerCase();
+        if (ext === '.jpg' || ext === '.jpeg') effectiveMime = 'image/jpeg';
+        else if (ext === '.png') effectiveMime = 'image/png';
+        else if (ext === '.webp') effectiveMime = 'image/webp';
+        else if (ext === '.pdf') effectiveMime = 'application/pdf';
+        else if (ext === '.pptx') effectiveMime = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+        else if (ext === '.ppt') effectiveMime = 'application/vnd.ms-powerpoint';
+        else if (ext === '.docx') effectiveMime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+        else if (ext === '.doc') effectiveMime = 'application/msword';
+        else if (ext === '.txt') effectiveMime = 'text/plain';
+    }
+
+    file.mimetype = effectiveMime;
+
+    if (allowedMimes.includes(effectiveMime)) {
         cb(null, true);
     } else {
-        cb(new AppError('Invalid file type', 400), false);
+        cb(new AppError('Invalid file type: ' + (effectiveMime || 'empty') + ' (' + file.originalname + ')', 400), false);
     }
 };
 
@@ -33,12 +51,23 @@ const uploadPdf = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: UPLOAD_LIMITS.PDF }, // POLICY: 100MB centralized
     fileFilter: fileFilter([
+        'image/jpeg',
+        'image/jpg',
+        'image/png',
+        'image/webp',
         'application/pdf', 
         'application/vnd.openxmlformats-officedocument.presentationml.presentation', // pptx
         'application/vnd.ms-powerpoint', // ppt
         'application/msword', // doc
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // docx
-        'text/plain' // txt
+        'text/plain', // txt
+        'text/x-c', // c
+        'text/x-c++', // cpp
+        'text/x-java-source', // java
+        'application/javascript', // js
+        'text/x-python', // py
+        'text/html', // html
+        'application/octet-stream' // fallback for code files
     ])
 });
 
@@ -122,6 +151,14 @@ router.post('/users/me/avatar',
     validate(uploadAvatarSchema),
     uploadImage.single('file'),
     controller.uploadAvatar
+);
+
+// Image + Document Upload for Lessons
+router.post('/instructor/lessons/:lessonId/files',
+    authMiddleware,
+    requirePanelRole,
+    uploadPdf.single('file'),
+    controller.uploadLessonImage
 );
 
 // Document Rendering Ingest (Phase 10)

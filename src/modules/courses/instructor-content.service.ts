@@ -342,7 +342,9 @@ export class InstructorContentService {
                         order: pf.order,
                         isPreview: false
                     }))
-                ].sort((a, b) => a.order - b.order)
+                ].sort((a, b) => a.order - b.order),
+                // @ts-ignore
+                subParts: (part.subParts || []).map((sp: any) => ({ id: sp.id, title: sp.title, order: sp.order, assets: [...sp.lessons.map((pl: any) => ({ id: pl.id, title: pl.title, type: 'VIDEO', bunnyVideoId: pl.video, order: pl.order })), ...sp.files.map((pf: any) => ({ id: pf.id, title: pf.title, type: 'PDF', storageKey: pf.storageKey, order: pf.order }))].sort((a, b) => a.order - b.order) }))
             }))
         }));
 
@@ -358,6 +360,8 @@ export class InstructorContentService {
             include: {
                 lessons: { orderBy: { order: 'asc' } },
                 files: { orderBy: { order: 'asc' } },
+                // @ts-ignore
+                subParts: { include: { lessons: { orderBy: { order: 'asc' } }, files: { orderBy: { order: 'asc' } } }, orderBy: { order: 'asc' } },
                 lecture: {
                     include: {
                         course: { include: { university: true } }
@@ -397,7 +401,9 @@ export class InstructorContentService {
                         order: pf.order,
                         isPreview: false
                     }))
-                ].sort((a, b) => a.order - b.order)
+                ].sort((a, b) => a.order - b.order),
+                // @ts-ignore
+                subParts: (part.subParts || []).map((sp: any) => ({ id: sp.id, title: sp.title, order: sp.order, assets: [...sp.lessons.map((pl: any) => ({ id: pl.id, title: pl.title, type: 'VIDEO', bunnyVideoId: pl.video, order: pl.order })), ...sp.files.map((pf: any) => ({ id: pf.id, title: pf.title, type: 'PDF', storageKey: pf.storageKey, order: pf.order }))].sort((a, b) => a.order - b.order) }))
             };
         }
 
@@ -540,7 +546,9 @@ export class InstructorContentService {
                                 storageKey: pf.storageKey,
                                 order: pf.order
                             }))
-                        ].sort((a, b) => a.order - b.order)
+                        ].sort((a, b) => a.order - b.order),
+                // @ts-ignore
+                subParts: (part.subParts || []).map((sp: any) => ({ id: sp.id, title: sp.title, order: sp.order, assets: [...sp.lessons.map((pl: any) => ({ id: pl.id, title: pl.title, type: 'VIDEO', bunnyVideoId: pl.video, order: pl.order })), ...sp.files.map((pf: any) => ({ id: pf.id, title: pf.title, type: 'PDF', storageKey: pf.storageKey, order: pf.order }))].sort((a, b) => a.order - b.order) }))
                     };
                 })
             }));
@@ -627,5 +635,30 @@ export class InstructorContentService {
                 return { price, paidAmount, remaining, paymentState };
             })()
         }));
+    }
+    // Sub-Parts Support
+    async createSubLesson(instructorId: string, parentLessonId: string, data: CreateLessonInput) {
+        const parent = await prisma.part.findUnique({
+            where: { id: parentLessonId },
+            include: { lecture: { include: { course: true } } }
+        });
+        if (!parent) throw new AppError('Parent lesson not found', 404);
+        if (parent.lecture.course.instructorId !== instructorId) throw new AppError('Access denied', 403);
+
+        const maxOrderPart = await prisma.part.findFirst({
+            where: { lectureId: parent.lectureId },
+            orderBy: { order: 'desc' }
+        });
+        const nextOrder = (maxOrderPart?.order || 0) + 1;
+
+        const subPart = await prisma.part.create({
+            data: {
+                title: data.title,
+                order: nextOrder,
+                lectureId: parent.lectureId,
+                parentPartId: parentLessonId
+            }
+        });
+        return { id: subPart.id, title: subPart.title, order: subPart.order, assets: [] };
     }
 }
