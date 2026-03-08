@@ -126,6 +126,8 @@ model Course {
   isFeatured  Boolean @default(false)
   isFree      Boolean @default(false)
 
+  trailerEnabled Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -137,7 +139,8 @@ model Course {
 
   paymentRecords PaymentRecord[]
 
-  lectures Lecture[]
+  lectures        Lecture[]
+  trailerSections CourseTrailerSection[]
 
   @@index([instructorId])
   @@index([universityId])
@@ -231,10 +234,25 @@ model Lecture {
   course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
   parts  Part[]
   files  LectureFile[]
+  trailerSections CourseTrailerSection[]
 
   @@unique([courseId, order])
   @@index([courseId])
   @@map("lectures")
+}
+
+model CourseTrailerSection {
+  id        String @id @default(uuid())
+  courseId   String
+  lectureId String
+  order     Int
+
+  course  Course  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lecture Lecture @relation(fields: [lectureId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, lectureId])
+  @@index([courseId])
+  @@map("course_trailer_sections")
 }
 
 model Part {

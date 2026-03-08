@@ -90,6 +90,10 @@ app.use('/api/v1/progress', progressRoutes);
 app.use('/api/v1/students', userRoutes);
 app.use('/api/v1/contact', contactRoutes);
 
+// Trailer
+import trailerRoutes from './modules/trailer/trailer.routes';
+app.use('/api/v1', trailerRoutes);
+
 // Payments (Admin)
 import instructorPaymentsRoutes from './modules/payments/instructor-payments.routes';
 app.use('/api/v1/instructor/payments', instructorPaymentsRoutes);
