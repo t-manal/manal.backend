@@ -16,6 +16,7 @@ import studentCourseRoutes from './modules/courses/student-content.routes';
 import progressRoutes from './modules/progress/progress.routes';
 import userRoutes from './modules/users/users.routes';
 import contactRoutes from './modules/contact/contact.routes';
+import trailerPublicRoutes from './modules/trailer/trailer-public.routes';
 
 // Phase 8: V2 Clean App - Removed orphaned modules:
 // - engagement (Comment/Like removed from schema)
@@ -93,6 +94,7 @@ app.use('/api/v1/contact', contactRoutes);
 // Trailer
 import trailerRoutes from './modules/trailer/trailer.routes';
 app.use('/api/v1', trailerRoutes);
+app.use('/api/v1/trailer', trailerPublicRoutes);
 
 // Payments (Admin)
 import instructorPaymentsRoutes from './modules/payments/instructor-payments.routes';
