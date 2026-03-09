@@ -35,7 +35,9 @@ app.use(cors({
             'http://localhost:3000',
             'https://student-frontend-bice.vercel.app', 
             'http://localhost:3001',
-            'https://admin-lms-pi.vercel.app' // Explicitly added for production Vercel support
+            'https://admin-lms-pi.vercel.app', // Explicitly added for production Vercel support
+            'https://admin.manalalhihi.com',
+            'https://www.manalalhihi.com'
         ];
         
         // Allow requests with no origin (like mobile apps or curl requests)

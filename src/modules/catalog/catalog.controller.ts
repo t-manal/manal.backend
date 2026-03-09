@@ -27,7 +27,6 @@ export class CatalogController {
             next(error);
         }
     }
-
     async createUniversity(req: Request, res: Response, next: NextFunction) {
         try {
             const input = createUniversitySchema.parse(req.body);
@@ -36,6 +35,20 @@ export class CatalogController {
                 logo: input.logo ?? undefined
             });
             return ApiResponse.success(res, data, 'University created successfully', 201);
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    async updateUniversity(req: Request, res: Response, next: NextFunction) {
+        try {
+            const { id } = req.params;
+            const { name } = req.body;
+            if (!name || name.trim() === '') {
+                throw new AppError('Name is required', 400);
+            }
+            const data = await catalogService.updateUniversity(id, { name: name.trim() });
+            return ApiResponse.success(res, data, 'University updated successfully');
         } catch (error) {
             next(error);
         }

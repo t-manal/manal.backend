@@ -84,6 +84,14 @@ export class CatalogService {
         return prisma.university.create({ data });
     }
 
+    async updateUniversity(universityId: string, data: { name: string }) {
+        const university = await this.getUniversity(universityId);
+        return prisma.university.update({
+            where: { id: universityId },
+            data: { name: data.name }
+        });
+    }
+
     async deleteUniversityCascade(universityId: string) {
         const university = await this.getUniversity(universityId);
 
