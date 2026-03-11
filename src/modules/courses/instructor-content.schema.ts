@@ -31,7 +31,9 @@ export const createLessonSchema = z.object({
     order: z.number().int().nonnegative(),
 });
 
-export const updateLessonSchema = createLessonSchema.partial();
+export const updateLessonSchema = createLessonSchema.partial().extend({
+    lectureId: z.string().uuid().optional(),
+});
 
 // V2: Asset types are VIDEO (PartLesson) or PDF/PPTX (PartFile)
 export const createAssetSchema = z.object({
@@ -42,7 +44,9 @@ export const createAssetSchema = z.object({
     storageKey: z.string().optional(), // For PDF/PPTX
 });
 
-export const updateAssetSchema = createAssetSchema.partial();
+export const updateAssetSchema = createAssetSchema.partial().extend({
+    partId: z.string().uuid().optional(),
+});
 
 export type CreateCourseInput = z.infer<typeof createCourseSchema>;
 export type UpdateCourseInput = z.infer<typeof updateCourseSchema>;

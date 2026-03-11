@@ -141,9 +141,70 @@ export class InstructorContentService {
 
         if (part) {
             if (part.lecture.course.instructorId !== instructorId) throw new AppError('Access denied', 403);
-            return prisma.part.update({
-                where: { id: lessonId },
-                data: { title: data.title, order: data.order }
+            let targetLectureId = part.lectureId;
+            let nextOrder = data.order ?? part.order;
+            let shouldResetParent = false;
+            let targetLectureMaxOrder = part.order;
+
+            if (data.lectureId && data.lectureId !== part.lectureId) {
+                const targetLecture = await prisma.lecture.findUnique({
+                    where: { id: data.lectureId },
+                    include: { course: true }
+                });
+
+                if (!targetLecture) throw new AppError('Target section not found', 404);
+                if (targetLecture.course.instructorId !== instructorId) throw new AppError('Access denied', 403);
+                if (targetLecture.courseId !== part.lecture.courseId) {
+                    throw new AppError('Lesson can only be moved within the same course', 400);
+                }
+
+                targetLectureId = targetLecture.id;
+                shouldResetParent = true;
+
+                const maxTargetOrder = await prisma.part.findFirst({
+                    where: { lectureId: targetLectureId },
+                    orderBy: { order: 'desc' },
+                    select: { order: true }
+                });
+
+                targetLectureMaxOrder = maxTargetOrder?.order || 0;
+
+                if (typeof data.order !== 'number') {
+                    nextOrder = targetLectureMaxOrder + 1;
+                }
+            }
+
+            const descendantIds = targetLectureId !== part.lectureId
+                ? await this.getDescendantPartIds(lessonId)
+                : [];
+
+            return prisma.$transaction(async (tx) => {
+                const updatedPart = await tx.part.update({
+                    where: { id: lessonId },
+                    data: {
+                        title: data.title,
+                        order: nextOrder,
+                        lectureId: targetLectureId,
+                        parentPartId: shouldResetParent ? null : undefined
+                    }
+                });
+
+                if (descendantIds.length > 0) {
+                    let descendantOrder = Math.max(nextOrder, targetLectureMaxOrder) + 1;
+
+                    for (const descendantId of descendantIds) {
+                        await tx.part.update({
+                            where: { id: descendantId },
+                            data: {
+                                lectureId: targetLectureId,
+                                order: descendantOrder
+                            }
+                        });
+                        descendantOrder += 1;
+                    }
+                }
+
+                return updatedPart;
             });
         }
 
@@ -223,12 +284,30 @@ export class InstructorContentService {
         });
         if (pl) {
             if (pl.part.lecture.course.instructorId !== instructorId) throw new AppError('Access denied', 403);
+            let targetPartId = pl.partId;
+            let nextOrder = data.order ?? pl.order;
+
+            if (data.partId && data.partId !== pl.partId) {
+                const targetPart = await this.getValidatedTargetPart(
+                    instructorId,
+                    pl.part.lecture.courseId,
+                    data.partId
+                );
+
+                targetPartId = targetPart.id;
+
+                if (typeof data.order !== 'number') {
+                    nextOrder = await this.getNextAssetOrder(targetPartId);
+                }
+            }
+
             return prisma.partLesson.update({
                 where: { id: assetId },
                 data: { 
                     title: data.title, 
-                    order: data.order,
-                    video: data.bunnyVideoId || pl.video
+                    order: nextOrder,
+                    video: data.bunnyVideoId || pl.video,
+                    partId: targetPartId
                 }
             });
         }
@@ -240,12 +319,30 @@ export class InstructorContentService {
         });
         if (pf) {
             if (pf.part.lecture.course.instructorId !== instructorId) throw new AppError('Access denied', 403);
+            let targetPartId = pf.partId;
+            let nextOrder = data.order ?? pf.order;
+
+            if (data.partId && data.partId !== pf.partId) {
+                const targetPart = await this.getValidatedTargetPart(
+                    instructorId,
+                    pf.part.lecture.courseId,
+                    data.partId
+                );
+
+                targetPartId = targetPart.id;
+
+                if (typeof data.order !== 'number') {
+                    nextOrder = await this.getNextAssetOrder(targetPartId);
+                }
+            }
+
             return prisma.partFile.update({
                 where: { id: assetId },
                 data: {
                     title: data.title,
-                    order: data.order,
-                    storageKey: data.storageKey || pf.storageKey
+                    order: nextOrder,
+                    storageKey: data.storageKey || pf.storageKey,
+                    partId: targetPartId
                 }
             });
         }
@@ -270,6 +367,55 @@ export class InstructorContentService {
     }
 
     // Helpers
+    private async getDescendantPartIds(rootPartId: string) {
+        const descendantIds: string[] = [];
+        let frontier = [rootPartId];
+
+        while (frontier.length > 0) {
+            const children = await prisma.part.findMany({
+                where: { parentPartId: { in: frontier } },
+                select: { id: true }
+            });
+
+            frontier = children.map((child) => child.id);
+            descendantIds.push(...frontier);
+        }
+
+        return descendantIds;
+    }
+
+    private async getValidatedTargetPart(instructorId: string, currentCourseId: string, targetPartId: string) {
+        const targetPart = await prisma.part.findUnique({
+            where: { id: targetPartId },
+            include: { lecture: { include: { course: true } } }
+        });
+
+        if (!targetPart) throw new AppError('Target lesson not found', 404);
+        if (targetPart.lecture.course.instructorId !== instructorId) throw new AppError('Access denied', 403);
+        if (targetPart.lecture.courseId !== currentCourseId) {
+            throw new AppError('Asset can only be moved within the same course', 400);
+        }
+
+        return targetPart;
+    }
+
+    private async getNextAssetOrder(partId: string) {
+        const [maxLesson, maxFile] = await Promise.all([
+            prisma.partLesson.findFirst({
+                where: { partId },
+                orderBy: { order: 'desc' },
+                select: { order: true }
+            }),
+            prisma.partFile.findFirst({
+                where: { partId },
+                orderBy: { order: 'desc' },
+                select: { order: true }
+            })
+        ]);
+
+        return Math.max(maxLesson?.order || 0, maxFile?.order || 0) + 1;
+    }
+
     private async checkCourseOwnership(instructorId: string, courseId: string) {
         const course = await prisma.course.findUnique({
             where: { id: courseId },
