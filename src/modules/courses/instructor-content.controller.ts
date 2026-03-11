@@ -141,6 +141,15 @@ export class InstructorContentController {
         }
     }
 
+    async moveLessonAssetsToLecture(req: Request, res: Response, next: NextFunction) {
+        try {
+            const result = await service.moveLessonAssetsToLecture(req.user!.userId, req.params.id);
+            return ApiResponse.success(res, result, 'Lesson assets moved to lecture');
+        } catch (error) {
+            next(error);
+        }
+    }
+
     // Asset
     async createAsset(req: Request, res: Response, next: NextFunction) {
         try {

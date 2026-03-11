@@ -49,6 +49,41 @@ export class InstructorContentService {
         ].sort((a, b) => a.order - b.order);
     }
 
+    private async getOrCreateLectureAssetPart(lectureId: string) {
+        const existingPart = await prisma.part.findFirst({
+            where: {
+                lectureId,
+                title: this.getLectureAssetPartTitle(lectureId)
+            },
+            include: {
+                lessons: { orderBy: { order: 'asc' } },
+                files: { orderBy: { order: 'asc' } }
+            }
+        });
+
+        if (existingPart) {
+            return existingPart;
+        }
+
+        const maxPartOrder = await prisma.part.findFirst({
+            where: { lectureId },
+            orderBy: { order: 'desc' },
+            select: { order: true }
+        });
+
+        return prisma.part.create({
+            data: {
+                lectureId,
+                title: this.getLectureAssetPartTitle(lectureId),
+                order: (maxPartOrder?.order || 0) + 1
+            },
+            include: {
+                lessons: { orderBy: { order: 'asc' } },
+                files: { orderBy: { order: 'asc' } }
+            }
+        });
+    }
+
     // Courses
     async createCourse(instructorId: string, data: CreateCourseInput) {
         const slug = data.slug || data.title.toLowerCase()
@@ -112,47 +147,78 @@ export class InstructorContentService {
     async ensureLectureAssetContainer(instructorId: string, sectionId: string) {
         const lecture = await prisma.lecture.findUnique({
             where: { id: sectionId },
-            include: {
-                course: true,
-                parts: {
-                    orderBy: { order: 'desc' },
-                    include: {
-                        lessons: { orderBy: { order: 'asc' } },
-                        files: { orderBy: { order: 'asc' } }
-                    }
-                }
-            }
+            include: { course: true }
         });
 
         if (!lecture) throw new AppError('Section not found', 404);
         if (lecture.course.instructorId !== instructorId) throw new AppError('Access denied', 403);
 
-        const existingPart = lecture.parts.find((part) => this.isLectureAssetPartTitle(part.title));
-        if (existingPart) {
-            return {
-                id: existingPart.id,
-                title: 'Lecture Assets',
-                order: existingPart.order,
-                assets: this.mapPartAssets(existingPart),
-                isLectureAssetContainer: true
-            };
+        const lectureAssetPart = await this.getOrCreateLectureAssetPart(lecture.id);
+
+        return {
+            id: lectureAssetPart.id,
+            title: 'Lecture Assets',
+            order: lectureAssetPart.order,
+            assets: this.mapPartAssets(lectureAssetPart),
+            isLectureAssetContainer: true
+        };
+    }
+
+    async moveLessonAssetsToLecture(instructorId: string, lessonId: string) {
+        const part = await prisma.part.findUnique({
+            where: { id: lessonId },
+            include: {
+                lecture: { include: { course: true } },
+                lessons: { orderBy: { order: 'asc' } },
+                files: { orderBy: { order: 'asc' } }
+            }
+        });
+
+        if (!part) throw new AppError('Lesson not found', 404);
+        if (part.lecture.course.instructorId !== instructorId) throw new AppError('Access denied', 403);
+        if (this.isLectureAssetPartTitle(part.title)) {
+            throw new AppError('Lecture asset containers are already inside the lecture', 400);
         }
 
-        const nextOrder = (lecture.parts[0]?.order || 0) + 1;
-        const createdPart = await prisma.part.create({
-            data: {
-                lectureId: lecture.id,
-                title: this.getLectureAssetPartTitle(lecture.id),
-                order: nextOrder
+        const lectureAssetPart = await this.getOrCreateLectureAssetPart(part.lectureId);
+        const directAssets = [
+            ...part.lessons.map((asset) => ({ kind: 'lesson' as const, id: asset.id, order: asset.order })),
+            ...part.files.map((asset) => ({ kind: 'file' as const, id: asset.id, order: asset.order }))
+        ].sort((a, b) => a.order - b.order);
+
+        if (directAssets.length === 0) {
+            return { movedCount: 0, targetPartId: lectureAssetPart.id };
+        }
+
+        let nextOrder = await this.getNextAssetOrder(lectureAssetPart.id);
+
+        await prisma.$transaction(async (tx) => {
+            for (const asset of directAssets) {
+                if (asset.kind === 'lesson') {
+                    await tx.partLesson.update({
+                        where: { id: asset.id },
+                        data: {
+                            partId: lectureAssetPart.id,
+                            order: nextOrder
+                        }
+                    });
+                } else {
+                    await tx.partFile.update({
+                        where: { id: asset.id },
+                        data: {
+                            partId: lectureAssetPart.id,
+                            order: nextOrder
+                        }
+                    });
+                }
+
+                nextOrder += 1;
             }
         });
 
         return {
-            id: createdPart.id,
-            title: 'Lecture Assets',
-            order: createdPart.order,
-            assets: [],
-            isLectureAssetContainer: true
+            movedCount: directAssets.length,
+            targetPartId: lectureAssetPart.id
         };
     }
 

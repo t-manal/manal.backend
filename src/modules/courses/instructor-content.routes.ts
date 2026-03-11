@@ -30,6 +30,7 @@ router.post('/sections/:sectionId/lessons', controller.createLesson);
 router.get('/lessons/:id', controller.getLesson);
 router.patch('/lessons/:id', controller.updateLesson);
 router.delete('/lessons/:id', controller.deleteLesson);
+router.post('/lessons/:id/move-assets-to-lecture', controller.moveLessonAssetsToLecture);
 
 // Assets
 router.post('/lessons/:lessonId/assets', controller.createAsset);
